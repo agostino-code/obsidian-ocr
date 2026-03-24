@@ -1,5 +1,5 @@
 import { PathLike } from "fs";
-import { LatexOCRSettings } from "main";
+import { ObsidianOCRSettings } from "main";
 
 export enum Status {
     Ready,
@@ -23,5 +23,5 @@ export default interface Model {
 
     status: () => Promise<{ status: Status, msg: string }>;
 
-    reloadSettings: (settings: LatexOCRSettings) => void;
+    reloadSettings: (settings: ObsidianOCRSettings) => void;
 }

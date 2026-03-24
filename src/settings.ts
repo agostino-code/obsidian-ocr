@@ -1,5 +1,5 @@
 import { Status } from "models/model";
-import LatexOCR from "main";
+import ObsidianOCR from "main";
 import { LocalModel } from "models/local_model";
 import ApiModel from "models/online_model";
 import { PluginSettingTab, App, Setting, Notice, TextComponent } from "obsidian";
@@ -10,10 +10,10 @@ import { normalize } from "path";
 const obfuscateApiKey = (apiKey = ''): string =>
     apiKey.length > 0 ? apiKey.replace(/^(.{3})(.*)(.{4})$/, '$1****$3') : ''
 
-export default class LatexOCRSettingsTab extends PluginSettingTab {
-    plugin: LatexOCR;
+export default class ObsidianOCRSettingsTab extends PluginSettingTab {
+    plugin: ObsidianOCR;
 
-    constructor(app: App, plugin: LatexOCR) {
+    constructor(app: App, plugin: ObsidianOCR) {
         super(app, plugin);
         this.plugin = plugin;
     }
@@ -56,8 +56,7 @@ export default class LatexOCRSettingsTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName("Use local model")
-            .setDesc("Use local model with python. \
-			See the project's README for installation instructions.")
+            .setDesc("Use local model with Ollama (e.g. glm-ocr). See the project's README for installation instructions.")
             .addToggle(toggle => toggle
                 .setValue(this.plugin.settings.useLocalModel)
                 .onChange(async value => {
@@ -118,7 +117,7 @@ export default class LatexOCRSettingsTab extends PluginSettingTab {
 
 
         const API_CONF_TEXT = "HuggingFace API Configuration"
-        const LOCAL_CONF_TEXT = "Local Python Model Configuration"
+        const LOCAL_CONF_TEXT = "Local Ollama Model Configuration"
         const configuration_text = containerEl.createEl("h5", { text: API_CONF_TEXT })
         if (this.plugin.settings.useLocalModel) {
             configuration_text.setText(LOCAL_CONF_TEXT)
@@ -164,32 +163,59 @@ export default class LatexOCRSettingsTab extends PluginSettingTab {
 
         ///// LOCAL MODEL SETTINGS /////
 
-        const pythonPath = new Setting(containerEl)
-            .setName('Python path')
-            .setDesc("Path to Python installation. You need to have the `latex_ocr_server` package installed, see the project's README for more information.\
-			Note that changing the path requires a server restart in order to take effect.")
+        const ollamaPath = new Setting(containerEl)
+            .setName('Ollama command/path')
+            .setDesc("Command or full path used to run Ollama. Usually `ollama` if it is available in PATH.")
             .addExtraButton(cb => cb
                 .setIcon("folder")
                 .setTooltip("Browse")
                 .onClick(async () => {
-                    const file = await picker("Open Python path", ["openFile"]) as string;
-                    (pythonPath.components[1] as TextComponent).setValue(file)
-                    this.plugin.settings.pythonPath = normalize(file);
+                    const file = await picker("Open Ollama executable", ["openFile"]) as string;
+                    (ollamaPath.components[1] as TextComponent).setValue(file)
+                    this.plugin.settings.ollamaPath = normalize(file);
                     await this.plugin.saveSettings();
                 }))
             .addText(text => text
-                .setPlaceholder('path/to/python.exe')
-                .setValue(this.plugin.settings.pythonPath)
+                .setPlaceholder('ollama')
+                .setValue(this.plugin.settings.ollamaPath)
                 .onChange(async (value) => {
-                    this.plugin.settings.pythonPath = normalize(value);
+                    this.plugin.settings.ollamaPath = normalize(value);
+                    await this.plugin.saveSettings();
+                }))
+
+        const ollamaHost = new Setting(containerEl)
+            .setName('Ollama host')
+            .setDesc('Base URL for Ollama, without port. Usually http://127.0.0.1')
+            .addText(text => text
+                .setValue(this.plugin.settings.ollamaHost)
+                .onChange(async (value) => {
+                    this.plugin.settings.ollamaHost = value.trim();
+                    await this.plugin.saveSettings();
+                }))
+
+        const ollamaPort = new Setting(containerEl)
+            .setName('Ollama port')
+            .setDesc('Port where the Ollama API is exposed.')
+            .addText(text => text
+                .setValue(this.plugin.settings.ollamaPort)
+                .onChange(async (value) => {
+                    this.plugin.settings.ollamaPort = value.trim();
+                    await this.plugin.saveSettings();
+                }))
+
+        const ollamaModel = new Setting(containerEl)
+            .setName('Ollama model')
+            .setDesc('Model name installed in Ollama (example: glm-ocr).')
+            .addText(text => text
+                .setValue(this.plugin.settings.ollamaModel)
+                .onChange(async (value) => {
+                    this.plugin.settings.ollamaModel = value.trim();
                     await this.plugin.saveSettings();
                 }))
 
         const serverStatus = new Setting(containerEl)
-            .setName('Server control')
-            .setDesc("LatexOCR runs a python script in the background that can process OCR requests. \
-				Use these settings to check it's status, start, or stop it. \
-				Note that starting can take a few seconds. If the model isn't cached, it needs to be downloaded first (~1.4 GB).")
+            .setName('Ollama control')
+            .setDesc("Obsidian OCR sends OCR requests to Ollama. Use these controls to check status or start/stop a local Ollama process from Obsidian.")
             .addButton(button => button
                 .setButtonText("Check status")
                 .setCta()
@@ -198,9 +224,9 @@ export default class LatexOCRSettingsTab extends PluginSettingTab {
                 })
             )
             .addButton(button => button
-                .setButtonText("(Re)start server")
+                .setButtonText("(Re)start Ollama")
                 .onClick(async (evt) => {
-                    new Notice("⚙️ Starting server...", 5000)
+                    new Notice("⚙️ Starting Ollama...", 5000)
                     if (this.plugin.model) {
                         this.plugin.model.unload()
                         this.plugin.model.load()
@@ -212,27 +238,15 @@ export default class LatexOCRSettingsTab extends PluginSettingTab {
                 .onClick(async (evt) => {
                     if (this.plugin.model) {
                         this.plugin.model.unload()
-                        new Notice("⚙️ Server stopped", 2000);
+                        new Notice("⚙️ Ollama process stopped", 2000);
                     } else {
-                        new Notice("❌ No server found to stop", 5000);
+                        new Notice("❌ No local process found to stop", 5000);
                     }
                 }))
 
-
-        const port = new Setting(containerEl)
-            .setName('Port')
-            .setDesc('Port to run the LatexOCR server on. Note that a server restart is required in order for this to take effect.')
-            .addText(text => text
-                .setValue(this.plugin.settings.port)
-                .onChange(async (value) => {
-                    this.plugin.settings.port = value;
-                    await this.plugin.saveSettings();
-                }))
-
         const startOnLaunch = new Setting(containerEl)
-            .setName("Start server on launch")
-            .setDesc("The LatexOCR server consumes quite a lot of memory. If you don't use it often, feel free to disable this.\
-				You will need to (re)start the server manually if you wish to use the plugin.")
+            .setName("Start local model on launch")
+            .setDesc("Attempt to start a local Ollama process on startup if the endpoint is not already running.")
             .addToggle(toggle => toggle
                 .setValue(this.plugin.settings.startServerOnLoad)
                 .onChange(async (value) => {
@@ -240,31 +254,14 @@ export default class LatexOCRSettingsTab extends PluginSettingTab {
                     await this.plugin.saveSettings();
                 }))
 
-        const cacheDir = new Setting(containerEl)
-            .setName("Cache dir")
-            .setDesc("The directory where the model is saved. By default this is in `Vault/.obsidian/plugins/obsidian-latex-ocr/model_cache`. \
-					Note that changing this will not delete the old cache, and require the model to be redownloaded. \
-					The server must be restarted for this to take effect.")
-            .addExtraButton(cb => cb
-                .setIcon("folder")
-                .setTooltip("Browse")
-                .onClick(async () => {
-                    const folder = await picker("Open cache directory", ["openDirectory"]) as string;
-                    (cacheDir.components[1] as TextComponent).setValue(folder)
-                    this.plugin.settings.cacheDirPath = normalize(folder)
-                    await this.plugin.saveSettings();
-                }))
-            .addText(text => text
-                .setValue(this.plugin.settings.cacheDirPath)
-                .onChange(async (value) => {
-                    const path = normalize(value)
-                    if (path !== "") {
-                        this.plugin.settings.cacheDirPath = path
-                        await this.plugin.saveSettings();
-                    }
-                }))
-
-        const LocalSettings: HTMLElement[] = [pythonPath.settingEl, serverStatus.settingEl, port.settingEl, startOnLaunch.settingEl, cacheDir.settingEl]
+        const LocalSettings: HTMLElement[] = [
+            ollamaPath.settingEl,
+            ollamaHost.settingEl,
+            ollamaPort.settingEl,
+            ollamaModel.settingEl,
+            serverStatus.settingEl,
+            startOnLaunch.settingEl,
+        ]
 
         if (this.plugin.settings.useLocalModel) {
             ApiSettings.forEach(e => e.hide())

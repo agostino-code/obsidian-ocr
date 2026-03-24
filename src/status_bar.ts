@@ -1,17 +1,17 @@
-import LatexOCR from "main";
+import ObsidianOCR from "main";
 import { Status } from "./models/model";
 
 
 export class StatusBar {
     span: HTMLSpanElement;
-    plugin: LatexOCR;
+    plugin: ObsidianOCR;
     private started: boolean;
     private should_stop: boolean;
 
-    constructor(plugin: LatexOCR) {
+    constructor(plugin: ObsidianOCR) {
         this.plugin = plugin;
         this.span = plugin.addStatusBarItem();
-        this.span.createEl("span", { text: "LatexOCR ❌" });
+        this.span.createEl("span", { text: "Obsidian OCR ❌" });
         this.updateStatusBar();
         if (!plugin.settings.showStatusBar) {
             this.hide();
@@ -20,34 +20,30 @@ export class StatusBar {
         this.startStatusBar();
     }
 
-    // Update the status bar based on the connection to the LatexOCR server
-    // ✅: LatexOCR is up and accepting requests
-    // 🌐: LatexOCR is downloading the model from huggingface
-    // ⚙️: LatexOCR is loading the model
-    // ❌: LatexOCR isn't reachable
+    // Update the status bar based on current OCR backend availability.
     async updateStatusBar(): Promise<{ status: Status; msg: string; }> {
         const status = await this.plugin.model.status();
-        console.debug(`latex_ocr: sent status check to ${this.plugin.model.constructor.name}, got ${JSON.stringify(status)}`);
+        console.debug(`obsidian_ocr: sent status check to ${this.plugin.model.constructor.name}, got ${JSON.stringify(status)}`);
 
         switch (status.status) {
             case Status.Ready:
-                this.span.setText("LatexOCR ✅");
+                this.span.setText("Obsidian OCR ✅");
                 break;
 
             case Status.Downloading:
-                this.span.setText("LatexOCR 🌐");
+                this.span.setText("Obsidian OCR 🌐");
                 break;
 
             case Status.Loading:
-                this.span.setText("LatexOCR ⚙️");
+                this.span.setText("Obsidian OCR ⚙️");
                 break;
 
             case Status.Misconfigured:
-                this.span.setText("LatexOCR 🔧");
+                this.span.setText("Obsidian OCR 🔧");
                 break;
 
             case Status.Unreachable:
-                this.span.setText("LatexOCR ❌");
+                this.span.setText("Obsidian OCR ❌");
                 break;
 
             default:

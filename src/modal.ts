@@ -1,22 +1,22 @@
 import clipboard from "clipboardy";
-import LatexOCR from "main";
+import ObsidianOCR from "main";
 import { Modal, App, Setting, TFile, Notice } from "obsidian";
 import * as path from "path";
 import { picker } from "utils";
 
-export class LatexOCRModal extends Modal {
-    plugin: LatexOCR
+export class ObsidianOCRModal extends Modal {
+    plugin: ObsidianOCR
     imagePath: string
 
-    constructor(app: App, plugin: LatexOCR) {
+    constructor(app: App, plugin: ObsidianOCR) {
         super(app);
         this.plugin = plugin
     }
 
     onOpen() {
-        this.containerEl.addClass('latex-ocr-modal')
+        this.containerEl.addClass('obsidian-ocr-modal')
         const { contentEl, titleEl } = this;
-        titleEl.setText("Latex OCR");
+        titleEl.setText("Obsidian OCR");
 
         const imageContainer = contentEl.createDiv({
             cls: 'image-container',

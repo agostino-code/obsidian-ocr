@@ -1,251 +1,231 @@
 import { ChildProcess, spawn } from 'child_process';
-import { LatexOCRSettings } from 'main';
+import * as fs from 'fs';
+import { ObsidianOCRSettings } from 'main';
 import Model, { Status } from 'models/model';
-import * as path from 'path'
-import { LatexOCRClient } from 'protos/latex_ocr';
-import * as grpc from '@grpc/grpc-js';
-import { Notice } from 'obsidian';
+import { Notice, requestUrl } from 'obsidian';
+import * as path from 'path';
 
-const IMG_EXTS = ["png", "jpg", "jpeg", "bmp", "dib", "eps", "gif", "ppm", "pbm", "pgm", "pnm", "webp"]
-const SCRIPT_VERSION = "0.1.0"
+const IMG_EXTS = ["png", "jpg", "jpeg", "bmp", "dib", "eps", "gif", "ppm", "pbm", "pgm", "pnm", "webp"];
+
+type OllamaTagResponse = {
+    models?: Array<{ name?: string }>;
+};
+
+type OllamaChatResponse = {
+    message?: {
+        content?: string;
+    };
+};
 
 export class LocalModel implements Model {
-    client: LatexOCRClient
-    serverProcess: ChildProcess;
-    last_download_update: string;
-    plugin_settings: LatexOCRSettings;
-    statusCheckIntervalLoading = 300;
+    serverProcess?: ChildProcess;
+    plugin_settings: ObsidianOCRSettings;
+    statusCheckIntervalLoading = 1000;
     statusCheckIntervalReady = 5000;
 
-    constructor(settings: LatexOCRSettings) {
-        this.plugin_settings = settings
+    constructor(settings: ObsidianOCRSettings) {
+        this.plugin_settings = settings;
     }
 
-    reloadSettings(settings: LatexOCRSettings) {
-        this.plugin_settings = settings
+    reloadSettings(settings: ObsidianOCRSettings) {
+        this.plugin_settings = settings;
     }
 
-    async load() {
-        // RPC Client
-        console.log(`latex_ocr: initializing RPC client at port ${this.plugin_settings.port}`)
-        this.client = new LatexOCRClient(`localhost:${this.plugin_settings.port}`, grpc.credentials.createInsecure())
+    load() {
+        console.log(`obsidian_ocr: local Ollama model loaded (${this.plugin_settings.ollamaModel})`);
     }
 
     unload() {
-        this.killServer()
+        this.killServer();
     }
 
-    // Kill the server process forcefully
+    private getOllamaBaseUrl() {
+        const host = this.plugin_settings.ollamaHost.replace(/\/$/, "");
+        return `${host}:${this.plugin_settings.ollamaPort}`;
+    }
+
     private killServer() {
-        if (this.serverProcess) {
-            console.log(`latex_ocr_server: killing server process (PID: ${this.serverProcess.pid})`)
+        if (!this.serverProcess) {
+            return;
+        }
 
-            try {
-                this.serverProcess.kill('SIGKILL');
-            } catch (err) {
-                console.debug(`latex_ocr_server: error killing process: ${err}`)
-            }
+        try {
+            this.serverProcess.kill();
+            console.log(`obsidian_ocr: stopped spawned ollama process (PID: ${this.serverProcess.pid})`);
+        } catch (err) {
+            console.debug(`obsidian_ocr: failed to stop ollama process`, err);
+        }
 
-            this.serverProcess = undefined as unknown as ChildProcess;
+        this.serverProcess = undefined;
+    }
+
+    private async isOllamaReachable() {
+        try {
+            const response = await requestUrl({
+                url: `${this.getOllamaBaseUrl()}/api/version`,
+                method: "GET",
+            });
+            return response.status >= 200 && response.status < 300;
+        } catch (_) {
+            return false;
         }
     }
 
-    async imgfileToLatex(filepath: string): Promise<string> {
-        return new Promise<string>((resolve, reject) => {
-            const file = path.parse(filepath)
+    private async getInstalledModels() {
+        const response = await requestUrl({
+            url: `${this.getOllamaBaseUrl()}/api/tags`,
+            method: "GET",
+        });
 
-            console.debug(`latex_ocr: Processing image at path: ${filepath}`)
-            console.debug(`latex_ocr: Parsed file info:`, file)
+        const tags = response.json as OllamaTagResponse;
+        return (tags.models ?? [])
+            .map((model) => model.name?.toLowerCase())
+            .filter((name): name is string => !!name);
+    }
 
-            if (!IMG_EXTS.contains(file.ext.substring(1))) {
-                reject(`Unsupported image extension ${file.ext}`)
-                return
-            }
+    private checkOllamaInstallation() {
+        return new Promise<void>((resolve, reject) => {
+            const process = spawn(this.plugin_settings.ollamaPath, ["--version"]);
 
-            // Check if file exists and is readable
-            const fs = require('fs')
-            try {
-                if (!fs.existsSync(filepath)) {
-                    reject(`Image file does not exist: ${filepath}`)
-                    return
-                }
-                const stats = fs.statSync(filepath)
-                console.debug(`latex_ocr: File size: ${stats.size} bytes`)
-                if (stats.size === 0) {
-                    reject(`Image file is empty: ${filepath}`)
-                    return
-                }
-            } catch (fileErr) {
-                reject(`Cannot access image file: ${fileErr}`)
-                return
-            }
-
-            const notice = new Notice(`⚙️ Generating Latex for ${file.base}...`, 0);
-            const d = this.plugin_settings.delimiters;
-
-            console.debug(`latex_ocr: Sending gRPC request with imagePath: ${filepath}`)
-
-            this.client.generateLatex({ imagePath: filepath }, async function (err, latex) {
-                console.debug(`latex_ocr: gRPC callback received`)
-                console.debug(`latex_ocr: Error:`, err)
-                console.debug(`latex_ocr: Response:`, latex)
-
-                if (err) {
-                    console.debug(`latex_ocr: Full gRPC error details:`, {
-                        code: err.code,
-                        details: err.details,
-                        message: err.message,
-                        metadata: err.metadata
-                    })
-                    reject(`Error getting response from latex_ocr_server: ${err}`)
+            process.on("close", (code: number | null) => {
+                if (code === 0) {
+                    resolve();
                 } else {
-                    console.debug(`latex_ocr_server response: ${latex?.latex}`);
-                    if (latex && latex.latex) {
-                        const result = `${d}${latex.latex}${d}`;
-                        resolve(result);
-                    } else {
-                        reject(`Server returned empty or invalid response: ${JSON.stringify(latex)}`)
-                    }
+                    reject(new Error(`Ollama was found at '${this.plugin_settings.ollamaPath}' but failed to run.`));
                 }
-                setTimeout(() => notice.hide(), 1000)
             });
-        })
+
+            process.on("error", (err: Error) => {
+                if (`${err}`.includes("ENOENT")) {
+                    reject(new Error(`Could not find Ollama command '${this.plugin_settings.ollamaPath}'.`));
+                } else {
+                    reject(new Error(`${err}`));
+                }
+            });
+        });
     }
 
-    status() {
-        const timeout_msecs = 200;
-        const timeout = new Date(new Date().getTime() + timeout_msecs);
-
-        return new Promise<{ status: Status, msg: string }>((resolve, reject) => this.client.waitForReady(timeout, (err) => {
-            if (err) {
-                this.checkPythonInstallation().then(() => {
-                    resolve({ status: Status.Unreachable, msg: `The server wasn't reachable before the deadline (${timeout_msecs}ms)` })
-                }).catch((pyerr) =>
-                    resolve({ status: Status.Misconfigured, msg: pyerr.message })
-                )
-
-            } else {
-                this.client.isReady({}, (err, reply) => {
-                    if (err) {
-                        console.debug(`latex_ocr: isReady call failed:`, err);
-                        resolve({ status: Status.Loading, msg: "Server is not ready yet" });
-                        return;
-                    }
-
-                    if (!reply?.isReady) {
-                        const msg = this.last_download_update
-                            ? `Downloading model: ${this.last_download_update}`
-                            : "Server is loading models";
-                        const status = this.last_download_update ? Status.Downloading : Status.Loading;
-                        resolve({ status, msg });
-                        return;
-                    }
-
-                    // Validate server is fully loaded by checking config
-                    this.client.getConfig({}, (configErr, config) => {
-                        if (configErr) {
-                            console.debug(`latex_ocr: getConfig failed:`, configErr);
-                            resolve({ status: Status.Loading, msg: "Server is loading models" });
-                        } else {
-                            console.debug(`latex_ocr: Server ready, config:`, config);
-                            resolve({ status: Status.Ready, msg: "Server ready" });
-                        }
-                    });
-                });
-            }
-        }));
-    }
-
-
-    // Check if the user specified pythonPath is working,
-    // and check if the required libraries can be imported using a test script
-    checkPythonInstallation() {
-        return new Promise<void>(
-            (resolve, reject) => {
-                const pythonProcess = spawn(this.plugin_settings.pythonPath, ["-m", "latex_ocr_server", "--version"])
-
-                pythonProcess.stdout.on('data', data => {
-                    const [prog, version] = data.toString().split(" ")
-                    console.log(`${prog} version ${version} (min version: ${SCRIPT_VERSION})`)
-                })
-                pythonProcess.stderr.on('data', data => {
-                    console.error(data.toString())
-                })
-
-                pythonProcess.on('close', code => {
-                    if (code === 0) {
-                        resolve()
-                    } else {
-                        reject(new Error(`latex_ocr_server isn't installed for ${this.plugin_settings.pythonPath}`))
-                    }
-                })
-
-                pythonProcess.on('error', (err) => {
-                    if (err.message.includes("ENOENT")) {
-                        reject(new Error(`Couldn't locate python install, please change it in the plugin settings: ${this.plugin_settings.pythonPath}`))
-                    } else {
-                        reject(new Error(`${err}`))
-                    }
-
-                })
-            })
-    }
-
-    // Start the latex_ocr_python script using user specified settings.
-    // Prefer `startServer` for user feedback
-    spawnLatexOcrServer(port: string): Promise<ChildProcess> {
+    private spawnOllamaServer(): Promise<ChildProcess> {
         return new Promise<ChildProcess>((resolve, reject) => {
-            const args = [
-                "-m", "latex_ocr_server",
-                "start",
-                "-d",
-                "--port", port,
-                "--cache_dir", this.plugin_settings.cacheDirPath]
+            const process = spawn(this.plugin_settings.ollamaPath, ["serve"]);
 
-            console.debug(`Starting server with the following command: \n${this.plugin_settings.pythonPath, args}`)
-            const pythonProcess = spawn(this.plugin_settings.pythonPath, args)
+            process.on("spawn", () => {
+                console.log(`obsidian_ocr: spawned ollama serve (PID: ${process.pid})`);
+                resolve(process);
+            });
 
-            pythonProcess.on('spawn', () => {
-                console.log(`latex_ocr_server: spawned`)
-                resolve(pythonProcess)
-            })
-            pythonProcess.on('error', (err) => {
-                reject(err)
-            })
+            process.on("error", (err: Error) => {
+                reject(err);
+            });
 
-            pythonProcess.stdout.on('data', data => {
-                if (data.toString().toLowerCase().includes("downloading")) {
-                    this.last_download_update = data.toString()
+            process.stdout?.on("data", (data: Buffer) => {
+                console.debug(`ollama: ${data.toString()}`);
+            });
+
+            process.stderr?.on("data", (data: Buffer) => {
+                console.debug(`ollama: ${data.toString()}`);
+            });
+
+            process.on("close", (code: number | null) => {
+                console.log(`obsidian_ocr: ollama serve exited (${code})`);
+                if (this.serverProcess?.pid === process.pid) {
+                    this.serverProcess = undefined;
                 }
-                console.debug(`latex_ocr_server: ${data.toString()}`)
-            })
-            pythonProcess.stderr.on('data', data => {
-                if (data.toString().toLowerCase().includes("downloading")) {
-                    this.last_download_update = data.toString()
-                }
-                console.debug(`latex_ocr_server: ${data.toString()}`)
-            })
-
-            pythonProcess.on('close', code => {
-                console.log(`latex_ocr_server: closed (${code})`)
-            })
-
-        })
+            });
+        });
     }
 
-    // Start the server process. If it fails, try to see if python is working.
-    async start() {
-        console.log("latex_ocr_server: starting local server")
+    async imgfileToLatex(filepath: string): Promise<string> {
+        const file = path.parse(filepath);
+        const ext = file.ext.substring(1).toLowerCase();
+
+        if (!IMG_EXTS.includes(ext)) {
+            throw new Error(`Unsupported image extension ${file.ext}`);
+        }
+
+        if (!fs.existsSync(filepath)) {
+            throw new Error(`Image file does not exist: ${filepath}`);
+        }
+
+        const notice = new Notice(`⚙️ Generating Latex for ${file.base}...`, 0);
+        const data = fs.readFileSync(filepath);
+        const imageB64 = data.toString("base64");
+        const d = this.plugin_settings.delimiters;
+
         try {
-            this.serverProcess = await this.spawnLatexOcrServer(this.plugin_settings.port)
+            const response = await requestUrl({
+                url: `${this.getOllamaBaseUrl()}/api/chat`,
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    model: this.plugin_settings.ollamaModel,
+                    stream: false,
+                    messages: [
+                        {
+                            role: "user",
+                            content: "Extract only LaTeX from this image. Return just the LaTeX expression without explanations.",
+                            images: [imageB64],
+                        },
+                    ],
+                }),
+            });
+
+            const result = response.json as OllamaChatResponse;
+            const latex = result.message?.content?.trim();
+
+            if (!latex) {
+                throw new Error(`Malformed response from Ollama: ${JSON.stringify(result)}`);
+            }
+
+            return `${d}${latex}${d}`;
+        } finally {
+            setTimeout(() => notice.hide(), 1000);
+        }
+    }
+
+    async status() {
+        try {
+            const reachable = await this.isOllamaReachable();
+            if (!reachable) {
+                await this.checkOllamaInstallation();
+                return {
+                    status: Status.Unreachable,
+                    msg: `Ollama is not reachable at ${this.getOllamaBaseUrl()}.`,
+                };
+            }
+
+            const models = await this.getInstalledModels();
+            const configuredModel = this.plugin_settings.ollamaModel.toLowerCase();
+            const modelFound = models.some((name) => {
+                return name === configuredModel || name === `${configuredModel}:latest`;
+            });
+
+            if (!modelFound) {
+                return {
+                    status: Status.Misconfigured,
+                    msg: `Model '${this.plugin_settings.ollamaModel}' not found in Ollama. Run: ollama pull ${this.plugin_settings.ollamaModel}`,
+                };
+            }
+
+            return { status: Status.Ready, msg: "Ollama is ready" };
         } catch (err) {
-            console.error(err)
-            this.checkPythonInstallation().then(() => {
-                new Notice(`❌ ${err}`, 10000)
-            }).catch((pythonErr) => {
-                new Notice(`❌ ${pythonErr}`, 10000)
-                console.error(pythonErr)
-            })
+            return { status: Status.Misconfigured, msg: `${err}` };
+        }
+    }
+
+    async start() {
+        const reachable = await this.isOllamaReachable();
+        if (reachable) {
+            console.log("obsidian_ocr: Ollama already running");
+            return;
+        }
+
+        try {
+            this.serverProcess = await this.spawnOllamaServer();
+            new Notice("⚙️ Ollama started", 3000);
+        } catch (err) {
+            console.error(err);
+            new Notice(`❌ Could not start Ollama: ${err}`, 10000);
         }
     }
 }

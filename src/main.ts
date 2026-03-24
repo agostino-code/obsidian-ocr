@@ -11,24 +11,36 @@ import * as fs from 'fs';
 import { LocalModel } from "models/local_model"
 import Model, { Status } from 'models/model';
 import { StatusBar } from "status_bar";
-import { LatexOCRModal } from 'modal';
+import { ObsidianOCRModal } from 'modal';
 import ApiModel from 'models/online_model';
-import LatexOCRSettingsTab from 'settings';
+import ObsidianOCRSettingsTab from 'settings';
 
-export interface LatexOCRSettings {
-	/** Path to look for python installation */
+export interface ObsidianOCRSettings {
+	/** Legacy setting retained for backwards compatibility */
 	pythonPath: string;
 
-	/** Path where local model is cached */
+	/** Legacy setting retained for backwards compatibility */
 	cacheDirPath: string;
+
+	/** Path/command used to run ollama */
+	ollamaPath: string;
+
+	/** Host where Ollama API is exposed */
+	ollamaHost: string;
+
+	/** Port where Ollama API is exposed */
+	ollamaPort: string;
+
+	/** Ollama model name used for OCR */
+	ollamaModel: string;
 
 	/** String to put around Latex code, usually `$` or `$$` for math mode */
 	delimiters: string;
 
-	/** Port for latex-ocr-server */
+	/** Legacy setting retained for backwards compatibility */
 	port: string;
 
-	/** Start latex-ocr-server when Obsidian is loaded */
+	/** Start local OCR backend when Obsidian is loaded */
 	startServerOnLoad: boolean;
 
 	/** Toggle status bar */
@@ -44,9 +56,13 @@ export interface LatexOCRSettings {
 	obfuscatedKey: string;
 }
 
-const DEFAULT_SETTINGS: LatexOCRSettings = {
+const DEFAULT_SETTINGS: ObsidianOCRSettings = {
 	pythonPath: 'python3',
 	cacheDirPath: '',
+	ollamaPath: 'ollama',
+	ollamaHost: 'http://127.0.0.1',
+	ollamaPort: '11434',
+	ollamaModel: 'glm-ocr',
 	delimiters: '$$',
 	port: '50051',
 	startServerOnLoad: true,
@@ -59,8 +75,8 @@ const DEFAULT_SETTINGS: LatexOCRSettings = {
 // https://pillow.readthedocs.io/en/stable/handbook/image-file-formats.html
 const IMG_EXTS = ["png", "jpg", "jpeg", "bmp", "dib", "eps", "gif", "ppm", "pbm", "pgm", "pnm", "webp"]
 
-export default class LatexOCR extends Plugin {
-	settings: LatexOCRSettings;
+export default class ObsidianOCR extends Plugin {
+	settings: ObsidianOCRSettings;
 	vaultPath: string;
 	pluginPath: string;
 	statusBar: StatusBar;
@@ -69,7 +85,7 @@ export default class LatexOCR extends Plugin {
 	async onload() {
 		// Load settings & initialize path values
 		await this.loadSettings();
-		this.addSettingTab(new LatexOCRSettingsTab(this.app, this));
+		this.addSettingTab(new ObsidianOCRSettingsTab(this.app, this));
 
 		if (this.app.vault.adapter instanceof FileSystemAdapter) {
 			this.vaultPath = this.app.vault.adapter.getBasePath()
@@ -97,7 +113,7 @@ export default class LatexOCR extends Plugin {
 		try {
 			await fs.promises.mkdir(path.join(this.vaultPath, this.pluginPath, "/.clipboard_images/"));
 		} catch (err) {
-			if (!err.message.contains("EEXIST")) {
+			if (!err.message.includes("EEXIST")) {
 				console.error(err)
 			}
 		}
@@ -105,10 +121,10 @@ export default class LatexOCR extends Plugin {
 		// Right-click "Generate Latex" menu on image files
 		this.registerEvent(
 			this.app.workspace.on("file-menu", (menu, file) => {
-				if (file instanceof TFile && IMG_EXTS.contains(file.extension)) {
+				if (file instanceof TFile && IMG_EXTS.includes(file.extension)) {
 					menu.addItem((item) => {
 						item
-							.setTitle("Generate Latex")
+							.setTitle("Generate Formula")
 							.setIcon("sigma")
 							.setSection("info")
 							.onClick(async () => {
@@ -131,14 +147,14 @@ export default class LatexOCR extends Plugin {
 		)
 
 		// Modal
-		this.addRibbonIcon('sigma', 'LatexOCR', (evt) => {
-			new LatexOCRModal(this.app, this).open()
+		this.addRibbonIcon('sigma', 'Obsidian OCR', (evt) => {
+			new ObsidianOCRModal(this.app, this).open()
 		})
 
 		// Command to read image from clipboard
 		this.addCommand({
-			id: 'paste-latex-from-clipboard',
-			name: 'Paste Latex from clipboard image',
+			id: 'paste-formula-from-clipboard-image',
+			name: 'Paste formula from clipboard image',
 			editorCallback: (editor, ctx) => {
 				this.clipboardToText(editor).catch((err) => {
 					new Notice(`❌ ${err.message}`)
@@ -149,10 +165,10 @@ export default class LatexOCR extends Plugin {
 
 		// Add (Re)start server command to command palette
 		this.addCommand({
-			id: 'restart-latexocr-server',
-			name: '(Re)start LatexOCR Server',
+			id: 'restart-local-ocr-service',
+			name: '(Re)start local OCR service',
 			callback: async () => {
-				new Notice("⚙️ Starting server...", 5000);
+				new Notice("⚙️ Starting local OCR service...", 5000);
 				if (this.model) {
 					this.model.unload();
 					this.model.load();
@@ -163,8 +179,8 @@ export default class LatexOCR extends Plugin {
 
 		// Add Stop server command to command palette
 		this.addCommand({
-			id: 'stop-latexocr-server',
-			name: 'Stop LatexOCR Server',
+			id: 'stop-local-ocr-service',
+			name: 'Stop local OCR service',
 			callback: async () => {
 				if (this.model) {
 					this.model.unload();
@@ -193,7 +209,7 @@ export default class LatexOCR extends Plugin {
 	}
 
 	// Get a clipboard file, save it to disk temporarily,
-	// call the LatexOCR client.
+	// call the OCR backend.
 	async clipboardToText(editor: Editor) {
 		// Get clipboard file
 		const file = await navigator.clipboard.read();
@@ -204,7 +220,7 @@ export default class LatexOCR extends Plugin {
 		let filetype = null;
 		for (const ext of IMG_EXTS) {
 			if (file[0].types.includes(`image/${ext}`)) {
-				console.debug(`latex_ocr: found image in clipboard with mimetype image/${ext}`)
+				console.debug(`obsidian_ocr: found image in clipboard with mimetype image/${ext}`)
 				filetype = ext;
 				break
 			}
@@ -222,7 +238,7 @@ export default class LatexOCR extends Plugin {
 
 		// Write generating message
 		const from = editor.getCursor("from")
-		console.debug(`latex_ocr: recieved paste command at line ${from.line}`)
+		console.debug(`obsidian_ocr: received paste command at line ${from.line}`)
 		const waitMessage = `\\LaTeX \\text{ is being generated... } \\vphantom{${from.line}}`
 		const fullMessage = `${this.settings.delimiters}${waitMessage}${this.settings.delimiters}`
 
