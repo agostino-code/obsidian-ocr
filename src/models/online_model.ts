@@ -55,7 +55,6 @@ export default class ApiModel implements Model {
                 response = await imageToText({
                     accessToken: this.apiKey,
                     model: HF_OCR_MODEL,
-                    provider: HF_PROVIDER as any,
                     data: data,
                 }, {
                     retry_on_error: false,
@@ -70,7 +69,6 @@ export default class ApiModel implements Model {
                 response = await imageToText({
                     accessToken: this.apiKey,
                     model: HF_OCR_MODEL,
-                    provider: HF_PROVIDER as any,
                     data: data,
                 }, {
                     retry_on_error: false,

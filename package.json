@@ -1,7 +1,7 @@
 {
 	"name": "obsidian-ocr",
 	"version": "1.0.0",
-	"description": "Obsidian plugin to extract math formulas from images with Ollama or Hugging Face providers.",
+	"description": "OCR for Obsidian: extract text and formulas from images, locally or in the cloud.",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
@@ -17,7 +17,7 @@
 		"@typescript-eslint/eslint-plugin": "5.29.0",
 		"@typescript-eslint/parser": "5.29.0",
 		"builtin-modules": "3.3.0",
-		"esbuild": "0.17.3",
+		"esbuild": "^0.27.4",
 		"obsidian": "latest",
 		"tslib": "2.4.0",
 		"typescript": "4.7.4"
