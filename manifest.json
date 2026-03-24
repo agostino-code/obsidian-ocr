@@ -1,11 +1,11 @@
 {
 	"id": "obsidian-llm-ocr",
 	"name": "Obsidian OCR",
-	"version": "1.0.1",
+	"version": "1.0.0",
 	"minAppVersion": "0.15.0",
 	"description": "OCR for Obsidian: extract text and formulas from images, locally or in the cloud.",
 	"author": "Agostino Cesarano",
-	"authorUrl": "https://github.com/agostino-code/obsidian-ocr",
+	"authorUrl": "github.com/agostino-code",
 	"fundingUrl": "",
 	"isDesktopOnly": true
 }
