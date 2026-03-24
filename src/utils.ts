@@ -9,10 +9,13 @@ export async function picker(
     message: string,
     properties: string[]
 ) {
-    const dirPath: string[] = window.electron.remote.dialog.showOpenDialogSync({
+    const dirPath: string[] | undefined = window.electron.remote.dialog.showOpenDialogSync({
         title: message,
         properties
     });
+    if (!dirPath || dirPath.length === 0) {
+        return undefined;
+    }
     if (properties.includes("multiSelections")) return dirPath
     else return dirPath[0];
 }

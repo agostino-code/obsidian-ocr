@@ -8,6 +8,7 @@ import * as path from "path";
 const HF_OCR_MODEL = "zai-org/GLM-OCR";
 const HF_LAYOUT_PARSING_URL = "https://router.huggingface.co/zai-org/api/paas/v4/layout_parsing";
 const HF_ROUTER_MODEL = "glm-ocr"
+const SUPPORTED_LAYOUT_PARSING_TYPES = ["image/jpeg", "image/png", "application/pdf"]
 
 function getImageContentType(filepath: string): string {
     const ext = path.extname(filepath).toLowerCase()
@@ -17,14 +18,8 @@ function getImageContentType(filepath: string): string {
     if (ext === ".png") {
         return "image/png"
     }
-    if (ext === ".webp") {
-        return "image/webp"
-    }
-    if (ext === ".gif") {
-        return "image/gif"
-    }
-    if (ext === ".bmp" || ext === ".dib") {
-        return "image/bmp"
+    if (ext === ".pdf") {
+        return "application/pdf"
     }
     return "application/octet-stream"
 }
@@ -141,8 +136,12 @@ export default class ApiModel implements Model {
         const file = path.parse(filepath)
         const notice = new Notice(`⚙️ Generating Latex for ${file.base}...`, 0);
 
-        const data = fs.readFileSync(filepath);
         const contentType = getImageContentType(filepath)
+        if (!SUPPORTED_LAYOUT_PARSING_TYPES.includes(contentType)) {
+            throw new Error(`Unsupported file type: ${contentType}. Supported: JPG, PNG, PDF`)
+        }
+
+        const data = fs.readFileSync(filepath);
 
         try {
             const response = await this.requestLayoutParsing(data, contentType)
