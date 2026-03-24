@@ -11,11 +11,21 @@ type OllamaTagResponse = {
     models?: Array<{ name?: string }>;
 };
 
+type OllamaPsResponse = {
+    models?: Array<{ name?: string }>;
+};
+
 type OllamaChatResponse = {
     message?: {
         content?: string;
     };
+    response?: string;
 };
+
+const OLLAMA_OCR_TIMEOUT_MS = 180000;
+const OLLAMA_OCR_RETRIES = 3;
+const OLLAMA_OCR_RETRY_DELAY_MS = 5000;
+const OLLAMA_OCR_PROMPT = "Text Recognition:";
 
 export class LocalModel implements Model {
     serverProcess?: ChildProcess;
@@ -83,6 +93,29 @@ export class LocalModel implements Model {
             .filter((name): name is string => !!name);
     }
 
+    private async getLoadedModels() {
+        const response = await requestUrl({
+            url: `${this.getOllamaBaseUrl()}/api/ps`,
+            method: "GET",
+        });
+
+        const running = response.json as OllamaPsResponse;
+        return (running.models ?? [])
+            .map((model) => model.name?.toLowerCase())
+            .filter((name): name is string => !!name);
+    }
+
+    private isConfiguredModelInList(models: string[]) {
+        const configuredModel = this.plugin_settings.ollamaModel.toLowerCase();
+        return models.some((name) => {
+            const base = name.split(":")[0];
+            const configuredBase = configuredModel.split(":")[0];
+            return name === configuredModel
+                || name === `${configuredModel}:latest`
+                || base === configuredBase;
+        });
+    }
+
     private checkOllamaInstallation() {
         return new Promise<void>((resolve, reject) => {
             const process = spawn(this.plugin_settings.ollamaPath, ["--version"]);
@@ -135,6 +168,28 @@ export class LocalModel implements Model {
         });
     }
 
+    private sleep(ms: number) {
+        return new Promise<void>((resolve) => setTimeout(resolve, ms));
+    }
+
+    private withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+        return new Promise<T>((resolve, reject) => {
+            const timeoutId = setTimeout(() => {
+                reject(new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)}s`));
+            }, timeoutMs);
+
+            promise
+                .then((value) => {
+                    clearTimeout(timeoutId);
+                    resolve(value);
+                })
+                .catch((error) => {
+                    clearTimeout(timeoutId);
+                    reject(error);
+                });
+        });
+    }
+
     async imgfileToLatex(filepath: string): Promise<string> {
         const file = path.parse(filepath);
         const ext = file.ext.substring(1).toLowerCase();
@@ -150,34 +205,65 @@ export class LocalModel implements Model {
         const notice = new Notice(`⚙️ Generating Latex for ${file.base}...`, 0);
         const data = fs.readFileSync(filepath);
         const imageB64 = data.toString("base64");
-        const d = this.plugin_settings.delimiters;
 
         try {
-            const response = await requestUrl({
-                url: `${this.getOllamaBaseUrl()}/api/chat`,
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    model: this.plugin_settings.ollamaModel,
-                    stream: false,
-                    messages: [
-                        {
-                            role: "user",
-                            content: "Extract only LaTeX from this image. Return just the LaTeX expression without explanations.",
-                            images: [imageB64],
-                        },
-                    ],
-                }),
-            });
-
-            const result = response.json as OllamaChatResponse;
-            const latex = result.message?.content?.trim();
-
-            if (!latex) {
-                throw new Error(`Malformed response from Ollama: ${JSON.stringify(result)}`);
+            try {
+                const loadedModels = await this.getLoadedModels();
+                if (!this.isConfiguredModelInList(loadedModels)) {
+                    new Notice(`⚙️ Model '${this.plugin_settings.ollamaModel}' is not loaded yet. Warming up...`, 4000);
+                }
+            } catch (psError) {
+                // Keep OCR flow resilient even if /api/ps is temporarily unavailable.
+                console.warn("obsidian_ocr: preliminary /api/ps check failed", psError);
             }
 
-            return `${d}${latex}${d}`;
+            let lastError: unknown;
+            for (let attempt = 1; attempt <= OLLAMA_OCR_RETRIES; attempt++) {
+                try {
+                    if (attempt > 1) {
+                        notice.setMessage(`⚙️ Generating Latex for ${file.base}... retry ${attempt}/${OLLAMA_OCR_RETRIES}`)
+                    }
+
+                    const response = await this.withTimeout(
+                        requestUrl({
+                            url: `${this.getOllamaBaseUrl().replace(/\/$/, "")}/api/chat`,
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                                model: this.plugin_settings.ollamaModel,
+                                stream: false,
+                                messages: [
+                                    {
+                                        role: "user",
+                                        content: OLLAMA_OCR_PROMPT,
+                                        images: [imageB64],
+                                    },
+                                ],
+                            }),
+                        }),
+                        OLLAMA_OCR_TIMEOUT_MS,
+                        "Ollama OCR request"
+                    );
+
+                    const result = response.json as OllamaChatResponse;
+                    const latex = (result.message?.content ?? result.response ?? "").trim();
+
+                    if (!latex) {
+                        throw new Error(`Malformed response from Ollama: ${JSON.stringify(result)}`);
+                    }
+
+                    return latex;
+                } catch (error) {
+                    lastError = error;
+                    const isLast = attempt === OLLAMA_OCR_RETRIES;
+                    console.warn(`obsidian_ocr: Ollama OCR attempt ${attempt}/${OLLAMA_OCR_RETRIES} failed`, error);
+                    if (!isLast) {
+                        await this.sleep(OLLAMA_OCR_RETRY_DELAY_MS);
+                    }
+                }
+            }
+
+            throw new Error(`Ollama OCR failed after ${OLLAMA_OCR_RETRIES} attempts: ${lastError}`);
         } finally {
             setTimeout(() => notice.hide(), 1000);
         }

@@ -26,20 +26,6 @@ export default class ObsidianOCRSettingsTab extends PluginSettingTab {
         ///// GENERAL SETTINGS /////
 
         new Setting(containerEl)
-            .setName('Formatting')
-            .setDesc('How the LaTeX should be formatted: formula only, $inline$ or $$block$$.')
-            .addDropdown(dd => dd
-                .addOption('', "Formula only")
-                .addOption('$', "Inline")
-                .addOption('$$', "Block")
-                .setValue(this.plugin.settings.delimiters)
-                .onChange(async (value) => {
-                    this.plugin.settings.delimiters = value
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(containerEl)
             .setName("Show status bar")
             .setDesc("✅ online / ⚙️ loading / 🌐 downloading / 🔧 needs configuration / ❌ unreachable")
             .addToggle(toggle => toggle

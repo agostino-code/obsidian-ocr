@@ -14,6 +14,7 @@ import { StatusBar } from "status_bar";
 import { ObsidianOCRModal } from 'modal';
 import ApiModel from 'models/online_model';
 import ObsidianOCRSettingsTab from 'settings';
+import { normalizeMathForObsidian } from 'utils';
 
 export interface ObsidianOCRSettings {
 	/** Legacy setting retained for backwards compatibility */
@@ -33,9 +34,6 @@ export interface ObsidianOCRSettings {
 
 	/** Ollama model name used for OCR */
 	ollamaModel: string;
-
-	/** String to put around Latex code, usually `$` or `$$` for math mode */
-	delimiters: string;
 
 	/** Legacy setting retained for backwards compatibility */
 	port: string;
@@ -63,7 +61,6 @@ const DEFAULT_SETTINGS: ObsidianOCRSettings = {
 	ollamaHost: 'http://127.0.0.1',
 	ollamaPort: '11434',
 	ollamaModel: 'glm-ocr',
-	delimiters: '$$',
 	port: '50051',
 	startServerOnLoad: true,
 	showStatusBar: true,
@@ -129,8 +126,9 @@ export default class ObsidianOCR extends Plugin {
 							.setSection("info")
 							.onClick(async () => {
 								this.model.imgfileToLatex(path.join(this.vaultPath, file.path)).then(async (latex) => {
+									const normalizedLatex = normalizeMathForObsidian(latex)
 									try {
-										await clipboard.write(latex)
+										await clipboard.write(normalizedLatex)
 									} catch (err) {
 										console.error(err);
 										new Notice(`⚠️ Couldn't copy to clipboard because document isn't focused`)
@@ -240,7 +238,7 @@ export default class ObsidianOCR extends Plugin {
 		const from = editor.getCursor("from")
 		console.debug(`obsidian_ocr: received paste command at line ${from.line}`)
 		const waitMessage = `\\LaTeX \\text{ is being generated... } \\vphantom{${from.line}}`
-		const fullMessage = `${this.settings.delimiters}${waitMessage}${this.settings.delimiters}`
+		const fullMessage = `$$${waitMessage}$$`
 
 		editor.replaceSelection(fullMessage)
 
@@ -254,6 +252,7 @@ export default class ObsidianOCR extends Plugin {
 		try {
 			// Get latex
 			latex = await this.model.imgfileToLatex(imgpath)
+			latex = normalizeMathForObsidian(latex)
 		} catch (err) {
 			// If err, return empty string so that we erase `fullMessage`
 			latex = ""

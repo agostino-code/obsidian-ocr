@@ -16,3 +16,25 @@ export async function picker(
     if (properties.includes("multiSelections")) return dirPath
     else return dirPath[0];
 }
+
+export function normalizeMathForObsidian(text: string): string {
+    if (!text) {
+        return text;
+    }
+
+    // Inline math in Obsidian should not contain extra spaces right after/before delimiters.
+    let normalized = text.replace(/\$(?!\$)([^$\n]*?)\$(?!\$)/g, (match, inner: string) => {
+        const trimmed = inner.trim();
+        if (!trimmed) {
+            return match;
+        }
+        return `$${trimmed}$`;
+    });
+
+    // Also normalize display math boundaries.
+    normalized = normalized.replace(/\$\$([\s\S]*?)\$\$/g, (_match, inner: string) => {
+        return `$$${inner.trim()}$$`;
+    });
+
+    return normalized;
+}
