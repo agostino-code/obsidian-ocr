@@ -76,7 +76,7 @@ export class LocalModel implements Model {
                 method: "GET",
             });
             return response.status >= 200 && response.status < 300;
-        } catch (_) {
+        } catch {
             return false;
         }
     }
@@ -308,7 +308,7 @@ export class LocalModel implements Model {
 
         try {
             this.serverProcess = await this.spawnOllamaServer();
-            new Notice("⚙️ Ollama started", 3000);
+            new Notice("Ollama started successfully.", 3000);
         } catch (err) {
             console.error(err);
             new Notice(`❌ Could not start Ollama: ${err}`, 10000);
