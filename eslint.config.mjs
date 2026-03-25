@@ -26,7 +26,7 @@ export default defineConfig([
       "@typescript-eslint/prefer-promise-reject-errors": "off",
       "@typescript-eslint/restrict-template-expressions": "off",
       "obsidianmd/settings-tab/no-manual-html-headings": "off",
-      "obsidianmd/ui/sentence-case": "warn",
+      "obsidianmd/ui/sentence-case": "off",
     },
   },
   {
