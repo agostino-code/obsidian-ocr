@@ -14,3 +14,10 @@
     max-height: 50vh;
     object-fit: contain;
 }
+
+.obsidian-ocr-modal .selected-file-name {
+    margin: 0 0 var(--size-4-2) 0;
+    color: var(--text-muted);
+    font-size: var(--font-ui-small);
+    word-break: break-word;
+}

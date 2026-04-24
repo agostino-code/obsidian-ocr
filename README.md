@@ -17,7 +17,8 @@ Extract text, formulas, tables, and structured content from images directly into
 - **Formula support** — mathematical expressions are recognized and output in LaTeX.
 - **Paste from clipboard** — use a custom command (e.g. `Ctrl+Alt+V`) to OCR an image from your clipboard and insert the result directly.
 - **Context menu** — right-click any image in your vault and choose "Generate OCR text".
-- **Two backends** — use the [Hugging Face API](#using-the-hugging-face-api) for a zero-install cloud option, or [run locally with Ollama](#run-locally-with-ollama) for full offline use.
+- **Multiple backends** — use the [Hugging Face API](#using-the-hugging-face-api) for a zero-install cloud option, or run locally with [Ollama](#run-locally-with-ollama) or [llama.cpp](#run-locally-with-llamacpp).
+- **On-demand local startup** — local backends are started automatically when the first OCR query is made.
 
 ---
 
@@ -35,7 +36,7 @@ The plugin can use the [GLM-OCR model](https://huggingface.co/zai-org/GLM-OCR) v
 
 - The free Inference API may take a few seconds to provision the model on the first request. Subsequent requests are faster.
 - Rate limits apply on the free tier. If you hit them, wait a moment and retry.
-- For heavy usage, consider running the model locally with Ollama (see below).
+- For heavy usage, consider running the model locally with Ollama or llama.cpp (see below).
 
 ---
 
@@ -77,13 +78,51 @@ ollama list
 In Obsidian, open **Settings → Obsidian OCR**:
 
 - Enable **Use local model**.
+- Set **Local backend** to **Ollama**.
 - Set **Ollama command/path** — usually just `ollama` if it is in your PATH, or the full path to the binary.
 - Set **Ollama host** — default is `http://127.0.0.1`.
 - Set **Ollama port** — default is `11434`.
 - Set **Ollama model** — enter the model name exactly as shown by `ollama list`, e.g. `glm-ocr`.
-- Press **(Re)start Ollama** to launch the server, then **Check Status** to confirm it is ready.
+- Use **(Re)start backend**, **Check status**, and **Stop server** when needed.
 
-### GPU Support
+> If Ollama is not reachable, the plugin tries to start it automatically on the first OCR operation.
+
+---
+
+## Run Locally with llama.cpp
+
+You can run OCR locally with [llama.cpp](https://github.com/ggml-org/llama.cpp) using `llama-server` and a compatible model.
+
+### Requirements
+
+- `llama-server` available in your PATH (or configured with a full path).
+- A compatible OCR model, for example `ggml-org/GLM-OCR-GGUF`.
+
+### Example startup command
+
+```bash
+llama-server -hf ggml-org/GLM-OCR-GGUF --sleep-idle-seconds 300
+```
+
+### Configure the plugin
+
+In Obsidian, open **Settings → Obsidian OCR**:
+
+- Enable **Use local model**.
+- Set **Local backend** to **llama.cpp**.
+- Set **llama.cpp command/path** — usually `llama-server`.
+- Set **Ollama host** — typically `http://127.0.0.1`.
+- Set **Ollama port** — typically `8080` (auto-set when selecting `llama.cpp`).
+- Set **llama.cpp startup args** — default is `-hf ggml-org/GLM-OCR-GGUF --sleep-idle-seconds 300`.
+- Use **(Re)start backend**, **Check status**, and **Stop server** when needed.
+
+> If llama.cpp is not reachable, the plugin tries to start it automatically on the first OCR operation.
+
+### VRAM note
+
+`--sleep-idle-seconds 300` can help reduce VRAM pressure during idle periods.
+
+### GPU Support (Ollama)
 
 Ollama automatically uses your GPU if supported. To verify:
 
@@ -92,6 +131,8 @@ ollama run glm-ocr "test"
 ```
 
 If you want to explicitly check CUDA availability, see the [Ollama GPU documentation](https://github.com/ollama/ollama/blob/main/docs/gpu.md).
+
+For llama.cpp GPU options, refer to the llama.cpp documentation and launch flags supported by your build.
 
 ### Status Bar
 
@@ -104,6 +145,13 @@ The status bar at the bottom of Obsidian shows the current state of the backend:
 | OCR 🌐 | Model being provisioned (API) |
 | OCR 🔧 | Needs configuration |
 | OCR ❌ | Unreachable |
+
+---
+
+## File Input Notes
+
+- The ribbon modal supports selecting files and shows the selected filename.
+- Image preview is shown for supported image formats..
 
 ---
 

@@ -47,19 +47,24 @@ export class ObsidianOCRModal extends Modal {
             cls: 'image-container',
         })
         const img = imageContainer.createEl("img")
+        const selectedFileName = contentEl.createEl("p", {
+            cls: "selected-file-name",
+            text: "No file selected",
+        })
 
         new Setting(contentEl)
-            .setName("Open image")
+            .setName("Open file")
             .addExtraButton(cb => cb
                 .setIcon("folder")
                 .setTooltip("Browse")
                 .onClick(async () => {
-                    const file = await picker("Open image", ["openFile"]) as string | undefined;
+                    const file = await picker("Open file", ["openFile"]) as string | undefined;
                     if (!file) {
                         return;
                     }
 
                     this.imagePath = file
+                    selectedFileName.setText(`Selected file: ${path.basename(file)}`)
                     const tfile = this.app.vault.getAbstractFileByPath(path.relative(this.plugin.vaultPath, file));
                     if (tfile instanceof TFile) {
                         img.setAttr("src", this.app.vault.getResourcePath(tfile))
@@ -91,13 +96,14 @@ export class ObsidianOCRModal extends Modal {
                             new Notice(`⚠️ ${err}`)
                         })
                     } else {
-                        new Notice("⚠️ Select an image first")
+                        new Notice("⚠️ Select a file first (image or PDF)")
                     }
                 }))
     }
 
     onClose() {
         const { contentEl } = this;
+        this.imagePath = ""
         contentEl.empty();
     }
 }

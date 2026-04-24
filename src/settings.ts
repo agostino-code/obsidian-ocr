@@ -20,10 +20,20 @@ export default class ObsidianOCRSettingsTab extends PluginSettingTab {
 
     display(): void {
         const { containerEl } = this;
+        const getLocalBackendLabel = () => this.plugin.settings.localBackend === "llama.cpp" ? "llama.cpp" : "Ollama";
+        let saveDebounceId: number | null = null;
+        const saveSettingsDebounced = () => {
+            if (saveDebounceId !== null) {
+                window.clearTimeout(saveDebounceId);
+            }
+            saveDebounceId = window.setTimeout(() => {
+                this.plugin.saveSettings();
+                saveDebounceId = null;
+            }, 250);
+        };
 
         containerEl.empty();
-
-        ///// GENERAL SETTINGS /////
+    ///// GENERAL SETTINGS /////
 
         new Setting(containerEl)
             .setName("Show status bar")
@@ -42,7 +52,7 @@ export default class ObsidianOCRSettingsTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName("Use local model")
-            .setDesc("Use local model with Ollama (e.g. glm-ocr). See the project's README for installation instructions.")
+            .setDesc("Use a local model backend (Ollama or llama.cpp). See the project's README for installation instructions.")
             .addToggle(toggle => toggle
                 .setValue(this.plugin.settings.useLocalModel)
                 .onChange(async value => {
@@ -52,7 +62,7 @@ export default class ObsidianOCRSettingsTab extends PluginSettingTab {
 
                     if (value) {
                         this.plugin.model = new LocalModel(this.plugin.settings)
-                        configuration_text.setText(LOCAL_CONF_TEXT)
+                        configuration_text.setText(getLocalConfText())
 
                         ApiSettings.forEach(e => e.hide())
                         LocalSettings.forEach(e => e.show())
@@ -103,10 +113,10 @@ export default class ObsidianOCRSettingsTab extends PluginSettingTab {
 
 
         const API_CONF_TEXT = "HuggingFace API Configuration"
-        const LOCAL_CONF_TEXT = "Local Ollama Model Configuration"
+        const getLocalConfText = () => `Local ${getLocalBackendLabel()} Model Configuration`
         const configuration_text = containerEl.createEl("h5", { text: API_CONF_TEXT })
         if (this.plugin.settings.useLocalModel) {
-            configuration_text.setText(LOCAL_CONF_TEXT)
+            configuration_text.setText(getLocalConfText())
         }
 
         ///// API MODEL SETTINGS /////
@@ -149,6 +159,20 @@ export default class ObsidianOCRSettingsTab extends PluginSettingTab {
 
         ///// LOCAL MODEL SETTINGS /////
 
+        const localBackend = new Setting(containerEl)
+            .setName('Local backend')
+            .setDesc("Choose which local backend to use for OCR.")
+            .addDropdown(dropdown => dropdown
+                .addOption("ollama", "Ollama")
+                .addOption("llama.cpp", "llama.cpp")
+                .setValue(this.plugin.settings.localBackend)
+                .onChange(async (value: string) => {
+                    this.plugin.settings.localBackend = value === "llama.cpp" ? "llama.cpp" : "ollama";
+                    configuration_text.setText(getLocalConfText());
+                    refreshLocalBackendControls();
+                    await this.plugin.saveSettings();
+                }))
+
         const ollamaPath = new Setting(containerEl)
             .setName('Ollama command/path')
             .setDesc("Command or full path used to run Ollama. Usually `ollama` if it is available in PATH.")
@@ -159,14 +183,14 @@ export default class ObsidianOCRSettingsTab extends PluginSettingTab {
                     const file = await picker("Open Ollama executable", ["openFile"]) as string;
                     (ollamaPath.components[1] as TextComponent).setValue(file)
                     this.plugin.settings.ollamaPath = normalize(file);
-                    await this.plugin.saveSettings();
+                    saveSettingsDebounced();
                 }))
             .addText(text => text
                 .setPlaceholder('ollama')
                 .setValue(this.plugin.settings.ollamaPath)
-                .onChange(async (value) => {
+                .onChange((value) => {
                     this.plugin.settings.ollamaPath = normalize(value);
-                    await this.plugin.saveSettings();
+                    saveSettingsDebounced();
                 }))
 
         const ollamaHost = new Setting(containerEl)
@@ -174,9 +198,9 @@ export default class ObsidianOCRSettingsTab extends PluginSettingTab {
             .setDesc('Base URL for Ollama, without port. Usually http://127.0.0.1')
             .addText(text => text
                 .setValue(this.plugin.settings.ollamaHost)
-                .onChange(async (value) => {
+                .onChange((value) => {
                     this.plugin.settings.ollamaHost = value.trim();
-                    await this.plugin.saveSettings();
+                    saveSettingsDebounced();
                 }))
 
         const ollamaPort = new Setting(containerEl)
@@ -184,9 +208,9 @@ export default class ObsidianOCRSettingsTab extends PluginSettingTab {
             .setDesc('Port where the Ollama API is exposed.')
             .addText(text => text
                 .setValue(this.plugin.settings.ollamaPort)
-                .onChange(async (value) => {
+                .onChange((value) => {
                     this.plugin.settings.ollamaPort = value.trim();
-                    await this.plugin.saveSettings();
+                    saveSettingsDebounced();
                 }))
 
         const ollamaModel = new Setting(containerEl)
@@ -194,14 +218,65 @@ export default class ObsidianOCRSettingsTab extends PluginSettingTab {
             .setDesc('Model name installed in Ollama (example: glm-ocr).')
             .addText(text => text
                 .setValue(this.plugin.settings.ollamaModel)
-                .onChange(async (value) => {
+                .onChange((value) => {
                     this.plugin.settings.ollamaModel = value.trim();
-                    await this.plugin.saveSettings();
+                    saveSettingsDebounced();
+                }))
+
+        const llamaCppPath = new Setting(containerEl)
+            .setName('llama.cpp command/path')
+            .setDesc("Command or full path used to run llama-server. Usually `llama-server` if it is available in PATH.")
+            .addExtraButton(cb => cb
+                .setIcon("folder")
+                .setTooltip("Browse")
+                .onClick(async () => {
+                    const file = await picker("Open llama.cpp executable", ["openFile"]) as string;
+                    (llamaCppPath.components[1] as TextComponent).setValue(file)
+                    this.plugin.settings.llamaCppPath = normalize(file);
+                    saveSettingsDebounced();
+                }))
+            .addText(text => text
+                .setPlaceholder('llama-server')
+                .setValue(this.plugin.settings.llamaCppPath)
+                .onChange((value) => {
+                    this.plugin.settings.llamaCppPath = normalize(value);
+                    saveSettingsDebounced();
+                }))
+
+        const llamaCppHost = new Setting(containerEl)
+            .setName('llama.cpp host')
+            .setDesc('Base URL for llama.cpp, without port. Usually http://127.0.0.1')
+            .addText(text => text
+                .setValue(this.plugin.settings.llamaCppHost)
+                .onChange((value) => {
+                    this.plugin.settings.llamaCppHost = value.trim();
+                    saveSettingsDebounced();
+                }))
+
+        const llamaCppPort = new Setting(containerEl)
+            .setName('llama.cpp port')
+            .setDesc('Port where the llama.cpp server API is exposed.')
+            .addText(text => text
+                .setValue(this.plugin.settings.llamaCppPort)
+                .onChange((value) => {
+                    this.plugin.settings.llamaCppPort = value.trim();
+                    saveSettingsDebounced();
+                }))
+
+        const llamaCppArgs = new Setting(containerEl)
+            .setName('llama.cpp startup args')
+            .setDesc('Arguments passed to llama-server on startup (example: -hf ggml-org/GLM-OCR-GGUF --sleep-idle-seconds 300).')
+            .addText(text => text
+                .setPlaceholder('-hf ggml-org/GLM-OCR-GGUF --sleep-idle-seconds 300')
+                .setValue(this.plugin.settings.llamaCppArgs)
+                .onChange((value) => {
+                    this.plugin.settings.llamaCppArgs = value.trim();
+                    saveSettingsDebounced();
                 }))
 
         const serverStatus = new Setting(containerEl)
-            .setName('Ollama control')
-            .setDesc("Obsidian OCR sends OCR requests to Ollama. Use these controls to check status or start/stop a local Ollama process from Obsidian.")
+            .setName('Local backend control')
+            .setDesc("Use these controls to check status or start/stop the selected local backend process from Obsidian.")
             .addButton(button => button
                 .setButtonText("Check status")
                 .setCta()
@@ -210,9 +285,9 @@ export default class ObsidianOCRSettingsTab extends PluginSettingTab {
                 })
             )
             .addButton(button => button
-                .setButtonText("(Re)start Ollama")
+                .setButtonText("(Re)start backend")
                 .onClick(async (evt) => {
-                    new Notice("⚙️ Starting Ollama...", 5000)
+                    new Notice(`⚙️ Starting ${getLocalBackendLabel()}...`, 5000)
                     if (this.plugin.model) {
                         this.plugin.model.unload()
                         this.plugin.model.load()
@@ -224,30 +299,45 @@ export default class ObsidianOCRSettingsTab extends PluginSettingTab {
                 .onClick(async (evt) => {
                     if (this.plugin.model) {
                         this.plugin.model.unload()
-                        new Notice("⚙️ Ollama process stopped", 2000);
+                        new Notice(`⚙️ ${getLocalBackendLabel()} process stopped`, 2000);
                     } else {
                         new Notice("❌ No local process found to stop", 5000);
                     }
                 }))
 
-        const startOnLaunch = new Setting(containerEl)
-            .setName("Start local model on launch")
-            .setDesc("Attempt to start a local Ollama process on startup if the endpoint is not already running.")
-            .addToggle(toggle => toggle
-                .setValue(this.plugin.settings.startServerOnLoad)
-                .onChange(async (value) => {
-                    this.plugin.settings.startServerOnLoad = value;
-                    await this.plugin.saveSettings();
-                }))
-
-        const LocalSettings: HTMLElement[] = [
+        const OllamaSettings: HTMLElement[] = [
             ollamaPath.settingEl,
             ollamaHost.settingEl,
             ollamaPort.settingEl,
             ollamaModel.settingEl,
-            serverStatus.settingEl,
-            startOnLaunch.settingEl,
         ]
+
+        const LlamaCppSettings: HTMLElement[] = [
+            llamaCppPath.settingEl,
+            llamaCppHost.settingEl,
+            llamaCppPort.settingEl,
+            llamaCppArgs.settingEl,
+        ]
+
+        const LocalSettings: HTMLElement[] = [
+            localBackend.settingEl,
+            ...OllamaSettings,
+            ...LlamaCppSettings,
+            serverStatus.settingEl,
+        ]
+
+        const refreshLocalBackendControls = () => {
+            const useLlamaCpp = this.plugin.settings.localBackend === "llama.cpp"
+            if (useLlamaCpp) {
+                OllamaSettings.forEach(e => e.hide())
+                LlamaCppSettings.forEach(e => e.show())
+            } else {
+                LlamaCppSettings.forEach(e => e.hide())
+                OllamaSettings.forEach(e => e.show())
+            }
+        }
+
+        refreshLocalBackendControls()
 
         if (this.plugin.settings.useLocalModel) {
             ApiSettings.forEach(e => e.hide())

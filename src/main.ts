@@ -26,6 +26,21 @@ export interface ObsidianOCRSettings {
 	/** Path/command used to run ollama */
 	ollamaPath: string;
 
+	/** Local OCR backend implementation */
+	localBackend: 'ollama' | 'llama.cpp';
+
+	/** Host where llama.cpp API is exposed */
+	llamaCppHost: string;
+
+	/** Port where llama.cpp API is exposed */
+	llamaCppPort: string;
+
+	/** Path/command used to run llama.cpp server */
+	llamaCppPath: string;
+
+	/** Extra startup args passed to llama.cpp server */
+	llamaCppArgs: string;
+
 	/** Host where Ollama API is exposed */
 	ollamaHost: string;
 
@@ -37,9 +52,6 @@ export interface ObsidianOCRSettings {
 
 	/** Legacy setting retained for backwards compatibility */
 	port: string;
-
-	/** Start local OCR backend when Obsidian is loaded */
-	startServerOnLoad: boolean;
 
 	/** Toggle status bar */
 	showStatusBar: boolean;
@@ -58,11 +70,15 @@ const DEFAULT_SETTINGS: ObsidianOCRSettings = {
 	pythonPath: 'python3',
 	cacheDirPath: '',
 	ollamaPath: 'ollama',
+	localBackend: 'ollama',
+	llamaCppHost: 'http://127.0.0.1',
+	llamaCppPort: '8080',
+	llamaCppPath: 'llama-server',
+	llamaCppArgs: '-hf ggml-org/GLM-OCR-GGUF --sleep-idle-seconds 300',
 	ollamaHost: 'http://127.0.0.1',
 	ollamaPort: '11434',
 	ollamaModel: 'glm-ocr',
 	port: '50051',
-	startServerOnLoad: true,
 	showStatusBar: true,
 	useLocalModel: false,
 	hfApiKey: "",
@@ -101,9 +117,6 @@ export default class ObsidianOCR extends Plugin {
 			this.model = new ApiModel(this.settings)
 		}
 		this.model.load()
-		if (this.settings.startServerOnLoad) {
-			this.model.start()
-		}
 
 
 		// Folder where temporary pasted files are stored
@@ -186,7 +199,7 @@ export default class ObsidianOCR extends Plugin {
 			}
 		});
 
-		// Status bar, will automatically start based on settings
+		// Status bar
 		this.statusBar = new StatusBar(this)
 	}
 
@@ -197,6 +210,7 @@ export default class ObsidianOCR extends Plugin {
 
 	async loadSettings() {
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+		delete (this.settings as Partial<ObsidianOCRSettings> & Record<string, unknown>).startServerOnLoad;
 	}
 
 	async saveSettings() {
@@ -228,9 +242,12 @@ export default class ObsidianOCR extends Plugin {
 			throw new Error("Couldn't find image in clipboard")
 		}
 
-		// Abort if model isn't ready
+		// If local backend is unreachable on the first paste, try starting it and continue.
 		const status = await this.model.status()
-		if (status.status !== Status.Ready) {
+		if (status.status === Status.Unreachable) {
+			console.warn(`obsidian_ocr: backend unreachable, trying auto-start before OCR: ${status.msg}`)
+			this.model.start()
+		} else if (status.status === Status.Misconfigured) {
 			throw new Error(status.msg)
 		}
 
