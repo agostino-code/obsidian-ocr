@@ -1,7 +1,7 @@
 {
 	"id": "vlm-ocr",
 	"name": "VLMs OCR",
-	"version": "1.0.1",
+	"version": "1.0.0",
 	"minAppVersion": "0.15.0",
 	"description": "Extract text and formulas from images, locally (Ollama) or in the cloud (Hugging Face) with VLMs.",
 	"author": "Agostino Cesarano",
