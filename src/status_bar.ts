@@ -21,9 +21,8 @@ export class StatusBar {
     }
 
     // Update the status bar based on current OCR backend availability.
-    async updateStatusBar(): Promise<{ status: Status; msg: string; }> {
+    async updateStatusBar(): Promise<{ status: Status; msg: string; lastChecked?: number }> {
         const status = await this.plugin.model.status();
-        console.debug(`obsidian_ocr: sent status check to ${this.plugin.model.constructor.name}, got ${JSON.stringify(status)}`);
 
         switch (status.status) {
             case Status.Ready:
@@ -45,10 +44,6 @@ export class StatusBar {
             case Status.Unreachable:
                 this.span.setText("Obsidian OCR ❌");
                 break;
-
-            default:
-                console.debug(status);
-                break;
         }
         return status;
     }
@@ -68,7 +63,6 @@ export class StatusBar {
         this.started = true;
         while (!this.should_stop) {
             const status = await this.updateStatusBar();
-            prevStatus = status;
 
             if (status.status === Status.Ready) {
                 await sleep(this.plugin.model.statusCheckIntervalReady);
@@ -86,6 +80,7 @@ export class StatusBar {
                 }
                 await sleep(loadingSleepTime);
             }
+            prevStatus = status;
         }
         this.started = false;
     }

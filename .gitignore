@@ -28,3 +28,5 @@ data.json
 model_cache
 __pycache__
 .clipboard_images
+
+AGENTS.md

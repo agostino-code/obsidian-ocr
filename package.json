@@ -1,6 +1,6 @@
 {
 	"name": "obsidian-ocr",
-	"version": "1.0.0",
+	"version": "1.0.2",
 	"description": "OCR for Obsidian: extract text and formulas from images, locally or in the cloud.",
 	"main": "main.js",
 	"scripts": {
@@ -18,16 +18,15 @@
 		"@types/node": "^16.11.6",
 		"@typescript-eslint/parser": "^8.28.0",
 		"builtin-modules": "3.3.0",
+		"esbuild": "^0.27.4",
 		"eslint": "^9.23.0",
 		"eslint-plugin-obsidianmd": "^0.1.9",
-		"esbuild": "^0.27.4",
 		"obsidian": "latest",
 		"tslib": "2.4.0",
 		"typescript": "^5.8.2"
 	},
 	"dependencies": {
 		"@huggingface/inference": "^2.6.4",
-		"clipboardy": "^4.0.0",
-		"pdfjs-dist": "^3.11.174"
+		"clipboardy": "^4.0.0"
 	}
 }

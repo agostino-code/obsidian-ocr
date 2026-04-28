@@ -77,11 +77,22 @@ export default class ApiModel implements Model {
     statusCheckIntervalLoading = 5000;
     statusCheckIntervalReady = 15000;
 
+    // Circuit breaker for API reachability
+    private lastUnreachableTime: number = 0;
+    private unreachableCount: number = 0;
+    private readonly CIRCUIT_BREAKER_THRESHOLD = 3;
+    private readonly CIRCUIT_BREAKER_TIMEOUT_MS = 60000;
+
+    // Cache last status result to avoid redundant checks
+    private cachedStatus: { status: Status; msg: string; timestamp: number } | null = null;
+    private readonly STATUS_CACHE_TTL_MS = 1000 * 60 * 60; // 1 hour
+
     constructor(settings: ObsidianOCRSettings) {
         this.reloadSettings(settings)
     }
 
     reloadSettings(settings: ObsidianOCRSettings) {
+        this.cachedStatus = null;
         this.settings = settings
         try {
             if (safeStorage.isEncryptionAvailable()) {
@@ -153,7 +164,7 @@ export default class ApiModel implements Model {
             return ""
         }
 
-        normalized = normalized.replace(/^['\"]+|['\"]+$/g, "")
+        normalized = normalized.replace(/^['"]+|['"]+$/g, "")
         if (!normalized) {
             return ""
         }
@@ -191,6 +202,7 @@ export default class ApiModel implements Model {
         }
 
         const data = fs.readFileSync(resolvedPath);
+        console.log(`obsidian_ocr: sending ${file.base} (${data.length} bytes) to Hugging Face API`);
 
         try {
             const response = await this.requestLayoutParsing(data, contentType)
@@ -199,7 +211,7 @@ export default class ApiModel implements Model {
                 throw new Error(`Hugging Face router error: ${routerError}`)
             }
 
-            console.debug(`obsidian_ocr: ${JSON.stringify(response)}`)
+            console.debug(`obsidian_ocr: API response received for ${file.base}`);
             setTimeout(() => notice.hide(), 1000)
 
             const latex = typeof response === "string"
@@ -218,18 +230,37 @@ export default class ApiModel implements Model {
                 throw new Error(`Malformed response from ${HF_OCR_MODEL}: ${JSON.stringify(response)}`)
             }
         } catch (error) {
-            setTimeout(() => notice.hide(), 1000)
-            // check 503: not provisioned
-            // check 429: rate limited
-            // check 400/401: unauthoorized api key
-            throw error
+            setTimeout(() => notice.hide(), 1000);
+            console.error(`obsidian_ocr: API request failed for ${file.base}: ${error}`);
+            throw error;
         }
     }
 
 
     async status() {
+        const now = Date.now();
+
         if (this.apiKey === "") {
-            return { status: Status.Misconfigured, msg: "Api key required" }
+            console.warn("obsidian_ocr: status check - API key required");
+            return { status: Status.Misconfigured, msg: "API key required", lastChecked: now };
+        }
+
+        // Check circuit breaker
+        if (this.unreachableCount >= this.CIRCUIT_BREAKER_THRESHOLD) {
+            if (now - this.lastUnreachableTime < this.CIRCUIT_BREAKER_TIMEOUT_MS) {
+                console.debug(`obsidian_ocr: circuit breaker open for API (count: ${this.unreachableCount})`);
+                return {
+                    status: Status.Unreachable,
+                    msg: "API temporarily unavailable (circuit breaker open)",
+                    lastChecked: now,
+                };
+            }
+            this.unreachableCount = 0;
+        }
+
+        // Check cache
+        if (this.cachedStatus && (now - this.cachedStatus.timestamp < this.STATUS_CACHE_TTL_MS)) {
+            return this.cachedStatus;
         }
 
         try {
@@ -237,16 +268,24 @@ export default class ApiModel implements Model {
                 url: "https://huggingface.co/api/whoami-v2",
                 headers: { Authorization: `Bearer ${this.apiKey}` },
                 method: "GET",
-            })
+            });
 
-            return { status: Status.Ready, msg: "API key is working" }
-        } catch (response) {
-            if (response.status === 400 || response.status === 401) {
-                return { status: Status.Misconfigured, msg: "Unauthorized: check your API key in the settings" }
-            } else {
-                console.error(response)
-                return { status: Status.Unreachable, msg: `Got ${response.status}: ${response}` }
+            this.unreachableCount = 0;
+            this.cachedStatus = { status: Status.Ready, msg: "API key is working", timestamp: now };
+            console.debug("obsidian_ocr: status check - API key is valid");
+            return { status: Status.Ready, msg: "API key is working", lastChecked: now };
+        } catch (response: any) {
+            this.lastUnreachableTime = now;
+            this.unreachableCount++;
+            this.cachedStatus = { status: Status.Unreachable, msg: `API error: ${response?.status || response}`, timestamp: now };
+
+            if (response?.status === 400 || response?.status === 401) {
+                console.warn(`obsidian_ocr: status check - unauthorized API key`);
+                return { status: Status.Misconfigured, msg: "Unauthorized: check your API key in the settings", lastChecked: now };
             }
+
+            console.warn(`obsidian_ocr: status check - API unreachable (${response?.status || response})`);
+            return { status: Status.Unreachable, msg: `Got ${response?.status || response}`, lastChecked: now };
         }
     }
 }
