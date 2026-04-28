@@ -132,16 +132,65 @@ export default class ApiModel implements Model {
         throw new Error("Empty response from Hugging Face API")
     }
 
+    private ensureReadableFile(filepath: string) {
+        if (!filepath.trim()) {
+            throw new Error("No file path provided")
+        }
+
+        if (!fs.existsSync(filepath)) {
+            throw new Error(`File does not exist: ${filepath}`)
+        }
+
+        const stat = fs.statSync(filepath)
+        if (!stat.isFile()) {
+            throw new Error(`Selected path is not a file: ${filepath}`)
+        }
+    }
+
+    private normalizeInputPath(filepath: string) {
+        let normalized = (filepath ?? "").trim()
+        if (!normalized) {
+            return ""
+        }
+
+        normalized = normalized.replace(/^['\"]+|['\"]+$/g, "")
+        if (!normalized) {
+            return ""
+        }
+
+        if (normalized.toLowerCase().startsWith("file://")) {
+            try {
+                const url = new URL(normalized)
+                normalized = decodeURIComponent(url.pathname)
+                if (/^\/[A-Za-z]:\//.test(normalized)) {
+                    normalized = normalized.substring(1)
+                }
+            } catch {
+                // Keep original value if URL parsing fails.
+            }
+        }
+
+        normalized = normalized.trim()
+        if (!normalized) {
+            return ""
+        }
+
+        return path.normalize(normalized)
+    }
+
     async imgfileToLatex(filepath: string): Promise<string> {
-        const file = path.parse(filepath)
+        const resolvedPath = this.normalizeInputPath(filepath)
+        this.ensureReadableFile(resolvedPath)
+
+        const file = path.parse(resolvedPath)
         const notice = new Notice(`⚙️ Generating Latex for ${file.base}...`, 0);
 
-        const contentType = getImageContentType(filepath)
+        const contentType = getImageContentType(resolvedPath)
         if (!SUPPORTED_LAYOUT_PARSING_TYPES.includes(contentType)) {
             throw new Error(`Unsupported file type: ${contentType}. Supported: JPG, PNG, PDF`)
         }
 
-        const data = fs.readFileSync(filepath);
+        const data = fs.readFileSync(resolvedPath);
 
         try {
             const response = await this.requestLayoutParsing(data, contentType)

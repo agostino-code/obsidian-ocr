@@ -6,6 +6,10 @@ import * as path from "path";
 import { picker, normalizeMathForObsidian } from "utils";
 
 function getPreviewDataUrl(filepath: string): string | null {
+    if (!fs.existsSync(filepath) || !fs.statSync(filepath).isFile()) {
+        return null
+    }
+
     const ext = path.extname(filepath).toLowerCase()
     let contentType: string | null = null
 
@@ -63,13 +67,20 @@ export class ObsidianOCRModal extends Modal {
                         return;
                     }
 
-                    this.imagePath = file
-                    selectedFileName.setText(`Selected file: ${path.basename(file)}`)
-                    const tfile = this.app.vault.getAbstractFileByPath(path.relative(this.plugin.vaultPath, file));
-                    if (tfile instanceof TFile) {
+                    const normalizedFile = file.trim()
+                    if (!normalizedFile || !fs.existsSync(normalizedFile) || !fs.statSync(normalizedFile).isFile()) {
+                        new Notice("⚠️ Please select a valid file (not a folder)")
+                        return
+                    }
+
+                    this.imagePath = normalizedFile
+                    selectedFileName.setText(`Selected file: ${path.basename(normalizedFile)}`)
+                    const ext = path.extname(normalizedFile).toLowerCase()
+                    const tfile = this.app.vault.getAbstractFileByPath(path.relative(this.plugin.vaultPath, normalizedFile));
+                    if (tfile instanceof TFile && ext !== ".pdf") {
                         img.setAttr("src", this.app.vault.getResourcePath(tfile))
                     } else {
-                        const preview = getPreviewDataUrl(file)
+                        const preview = getPreviewDataUrl(normalizedFile)
                         if (preview) {
                             img.setAttr("src", preview)
                         } else {
@@ -80,10 +91,11 @@ export class ObsidianOCRModal extends Modal {
             .addButton(button => button
                 .setButtonText("Convert to Latex")
                 .setCta()
-                .onClick(() => {
-                    if (this.imagePath) {
-                        this.close()
-                        this.plugin.model.imgfileToLatex(this.imagePath).then(async (latex) => {
+            .onClick(() => {
+                const { imagePath, plugin } = this;
+                if (imagePath) {
+                    this.close()
+                    plugin.model.imgfileToLatex(imagePath).then(async (latex) => {
                             const normalizedLatex = normalizeMathForObsidian(latex)
                             try {
                                 await clipboard.write(normalizedLatex)

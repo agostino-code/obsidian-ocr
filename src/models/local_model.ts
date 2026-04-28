@@ -4,8 +4,15 @@ import { ObsidianOCRSettings } from 'main';
 import Model, { Status } from 'models/model';
 import { Notice, requestUrl } from 'obsidian';
 import * as path from 'path';
+import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf';
+import * as pdfjsWorker from 'pdfjs-dist/legacy/build/pdf.worker';
+
+// Configure PDF.js worker
+(pdfjsLib as any).GlobalWorkerOptions.workerSrc = pdfjsWorker;
 
 const IMG_EXTS = ["png", "jpg", "jpeg", "bmp", "dib", "eps", "gif", "ppm", "pbm", "pgm", "pnm", "webp"];
+const PDF_EXT = "pdf";
+const SUPPORTED_EXTS = [...IMG_EXTS, PDF_EXT];
 
 type OllamaTagResponse = {
     models?: Array<{ name?: string }>;
@@ -28,6 +35,16 @@ type LlamaCppChatResponse = {
             content?: string | Array<{ text?: string }>;
         };
     }>;
+};
+
+type PdfDocumentLike = {
+    numPages: number;
+    getPage(pageNumber: number): Promise<{
+        getViewport(options: { scale: number }): { width: number; height: number };
+        render(params: { canvasContext: CanvasRenderingContext2D; viewport: { width: number; height: number } }): { promise: Promise<void> };
+        cleanup(): void;
+    }>;
+    destroy(): Promise<void>;
 };
 
 const OLLAMA_OCR_TIMEOUT_MS = 180000;
@@ -395,62 +412,261 @@ export class LocalModel implements Model {
         return latex;
     }
 
-    async imgfileToLatex(filepath: string): Promise<string> {
-        const file = path.parse(filepath);
-        const ext = file.ext.substring(1).toLowerCase();
+    private async prepareBackendForOCR() {
+        await this.ensureBackendReadyForOCR();
 
-        if (!IMG_EXTS.includes(ext)) {
-            throw new Error(`Unsupported image extension ${file.ext}`);
+        if (this.getBackendType() !== "ollama") {
+            return;
+        }
+
+        try {
+            const loadedModels = await this.getLoadedModels();
+            if (!this.isConfiguredModelInList(loadedModels)) {
+                new Notice(`⚙️ Model '${this.plugin_settings.ollamaModel}' is not loaded yet. Warming up...`, 4000);
+            }
+        } catch (psError) {
+            // Keep OCR flow resilient even if /api/ps is temporarily unavailable.
+            console.warn("obsidian_ocr: preliminary /api/ps check failed", psError);
+        }
+    }
+
+    private async renderPdfPageToBase64(pdfDocument: PdfDocumentLike, pageNumber: number) {
+        const page = await pdfDocument.getPage(pageNumber);
+        const viewport = page.getViewport({ scale: 2 });
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.ceil(viewport.width);
+        canvas.height = Math.ceil(viewport.height);
+
+        const context = canvas.getContext("2d");
+        if (!context) {
+            throw new Error(`Could not create canvas context while rendering PDF page ${pageNumber}`);
+        }
+
+        try {
+            await page.render({ canvasContext: context, viewport }).promise;
+            const dataUrl = canvas.toDataURL("image/png");
+            const [, base64] = dataUrl.split(",", 2);
+            if (!base64) {
+                throw new Error(`Failed to render PDF page ${pageNumber}`);
+            }
+            return base64;
+        } finally {
+            page.cleanup();
+        }
+    }
+
+    private async ocrRenderedImage(imageB64: string, ext: string, notice: Notice, label: string) {
+        const backend = this.getBackendType();
+        let lastError: unknown;
+
+        for (let attempt = 1; attempt <= OLLAMA_OCR_RETRIES; attempt++) {
+            try {
+                if (attempt > 1) {
+                    notice.setMessage(`⚙️ Generating Latex for ${label}... retry ${attempt}/${OLLAMA_OCR_RETRIES}`)
+                }
+
+                if (backend === "llama.cpp") {
+                    return await this.requestLlamaCppOCR(imageB64, ext);
+                }
+
+                return await this.requestOllamaOCR(imageB64);
+            } catch (error) {
+                lastError = error;
+                const isLast = attempt === OLLAMA_OCR_RETRIES;
+                console.warn(`obsidian_ocr: ${this.getBackendDisplayName()} OCR attempt ${attempt}/${OLLAMA_OCR_RETRIES} failed`, error);
+                if (!isLast) {
+                    await this.ensureBackendReadyForOCR();
+                    await this.sleep(OLLAMA_OCR_RETRY_DELAY_MS);
+                }
+            }
+        }
+
+        throw new Error(`${this.getBackendDisplayName()} OCR failed after ${OLLAMA_OCR_RETRIES} attempts: ${lastError}`);
+    }
+
+    private async imageFileToLatex(filepath: string, notice: Notice, label: string, ext: string) {
+        const data = fs.readFileSync(filepath);
+        const imageB64 = data.toString("base64");
+        return await this.ocrRenderedImage(imageB64, ext, notice, label);
+    }
+
+    private async pdfFileToLatex(filepath: string, notice: Notice, label: string) {
+        const pdfData = fs.readFileSync(filepath);
+        const loadingTask = (pdfjsLib as any).getDocument({ data: new Uint8Array(pdfData), disableWorker: true });
+        const pdfDocument = await loadingTask.promise as PdfDocumentLike;
+
+        try {
+            const pageLatex: string[] = [];
+            for (let pageNumber = 1; pageNumber <= pdfDocument.numPages; pageNumber++) {
+                notice.setMessage(`⚙️ Generating Latex for ${label}... page ${pageNumber}/${pdfDocument.numPages}`);
+                const imageB64 = await this.renderPdfPageToBase64(pdfDocument, pageNumber);
+                const latex = await this.ocrRenderedImage(imageB64, "png", notice, `${label} page ${pageNumber}/${pdfDocument.numPages}`);
+                pageLatex.push(latex);
+            }
+
+            return pageLatex.join("\n\n");
+        } finally {
+            await pdfDocument.destroy();
+        }
+    }
+
+    private async canOpenAsPdf(filepath: string) {
+        try {
+            const pdfData = fs.readFileSync(filepath);
+            const loadingTask = (pdfjsLib as any).getDocument({ data: new Uint8Array(pdfData), disableWorker: true });
+            const pdfDocument = await loadingTask.promise as PdfDocumentLike;
+            await pdfDocument.destroy();
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    private detectFileTypeFromMagicHeader(filepath: string) {
+        try {
+            const handle = fs.openSync(filepath, "r");
+            try {
+                const buffer = Buffer.alloc(1024);
+                const bytesRead = fs.readSync(handle, buffer, 0, buffer.length, 0);
+                if (bytesRead < 4) {
+                    return null;
+                }
+
+                // PDF header is usually at byte 0, but some files can include a preamble.
+                if (bytesRead >= 5 && buffer.toString("ascii", 0, bytesRead).includes("%PDF-")) {
+                    return PDF_EXT;
+                }
+
+                // PNG: 89 50 4E 47 0D 0A 1A 0A
+                if (bytesRead >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]))) {
+                    return "png";
+                }
+
+                // JPEG: FF D8 FF
+                if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) {
+                    return "jpg";
+                }
+
+                // GIF: GIF87a / GIF89a
+                if (bytesRead >= 6) {
+                    const gifHeader = buffer.toString("ascii", 0, 6);
+                    if (gifHeader === "GIF87a" || gifHeader === "GIF89a") {
+                        return "gif";
+                    }
+                }
+
+                // BMP: 42 4D => BM
+                if (buffer[0] === 0x42 && buffer[1] === 0x4D) {
+                    return "bmp";
+                }
+
+                // WEBP: RIFF....WEBP
+                if (bytesRead >= 12
+                    && buffer.toString("ascii", 0, 4) === "RIFF"
+                    && buffer.toString("ascii", 8, 12) === "WEBP") {
+                    return "webp";
+                }
+
+                return null;
+            } finally {
+                fs.closeSync(handle);
+            }
+        } catch {
+            return null;
+        }
+    }
+
+    private resolveInputExt(filepath: string, ext: string) {
+        const normalizedExt = ext.trim().replace(/^\./, "").toLowerCase();
+        if (SUPPORTED_EXTS.includes(normalizedExt)) {
+            return normalizedExt;
+        }
+
+        const detectedExt = this.detectFileTypeFromMagicHeader(filepath);
+        if (detectedExt && SUPPORTED_EXTS.includes(detectedExt)) {
+            return detectedExt;
+        }
+
+        return normalizedExt;
+    }
+
+    private normalizeInputPath(filepath: string) {
+        let normalized = (filepath ?? "").trim();
+        if (!normalized) {
+            return "";
+        }
+
+        // Strip accidental wrapping quotes from copied/pasted paths.
+        normalized = normalized.replace(/^['\"]+|['\"]+$/g, "");
+        if (!normalized) {
+            return "";
+        }
+
+        if (normalized.toLowerCase().startsWith("file://")) {
+            try {
+                const url = new URL(normalized);
+                normalized = decodeURIComponent(url.pathname);
+                // Windows file URLs may look like /C:/Users/...
+                if (/^\/[A-Za-z]:\//.test(normalized)) {
+                    normalized = normalized.substring(1);
+                }
+            } catch {
+                // Keep original value if URL parsing fails.
+            }
+        }
+
+        normalized = normalized.trim();
+        if (!normalized) {
+            return "";
+        }
+
+        return path.normalize(normalized);
+    }
+
+    private ensureReadableFile(filepath: string) {
+        if (!filepath.trim()) {
+            throw new Error("No file path provided");
         }
 
         if (!fs.existsSync(filepath)) {
-            throw new Error(`Image file does not exist: ${filepath}`);
+            throw new Error(`File does not exist: ${filepath}`);
         }
 
+        const stat = fs.statSync(filepath);
+        if (!stat.isFile()) {
+            throw new Error(`Selected path is not a file: ${filepath}`);
+        }
+    }
+
+    async imgfileToLatex(filepath: string): Promise<string> {
+        const resolvedPath = this.normalizeInputPath(filepath);
+        const file = path.parse(resolvedPath);
+        const ext = file.ext.substring(1);
+
+        this.ensureReadableFile(resolvedPath);
+
+        let resolvedExt = this.resolveInputExt(resolvedPath, ext);
+
         const notice = new Notice(`⚙️ Generating Latex for ${file.base}...`, 0);
-        const data = fs.readFileSync(filepath);
-        const imageB64 = data.toString("base64");
-        const backend = this.getBackendType();
 
         try {
-            await this.ensureBackendReadyForOCR();
+            await this.prepareBackendForOCR();
 
-            if (backend === "ollama") {
-                try {
-                    const loadedModels = await this.getLoadedModels();
-                    if (!this.isConfiguredModelInList(loadedModels)) {
-                        new Notice(`⚙️ Model '${this.plugin_settings.ollamaModel}' is not loaded yet. Warming up...`, 4000);
-                    }
-                } catch (psError) {
-                    // Keep OCR flow resilient even if /api/ps is temporarily unavailable.
-                    console.warn("obsidian_ocr: preliminary /api/ps check failed", psError);
-                }
+            if (resolvedExt === PDF_EXT) {
+                return await this.pdfFileToLatex(resolvedPath, notice, file.base);
             }
 
-            let lastError: unknown;
-            for (let attempt = 1; attempt <= OLLAMA_OCR_RETRIES; attempt++) {
-                try {
-                    if (attempt > 1) {
-                        notice.setMessage(`⚙️ Generating Latex for ${file.base}... retry ${attempt}/${OLLAMA_OCR_RETRIES}`)
-                    }
-
-                    if (backend === "llama.cpp") {
-                        return await this.requestLlamaCppOCR(imageB64, ext);
-                    }
-
-                    return await this.requestOllamaOCR(imageB64);
-                } catch (error) {
-                    lastError = error;
-                    const isLast = attempt === OLLAMA_OCR_RETRIES;
-                    console.warn(`obsidian_ocr: ${this.getBackendDisplayName()} OCR attempt ${attempt}/${OLLAMA_OCR_RETRIES} failed`, error);
-                    if (!isLast) {
-                        await this.ensureBackendReadyForOCR();
-                        await this.sleep(OLLAMA_OCR_RETRY_DELAY_MS);
-                    }
+            if (!IMG_EXTS.includes(resolvedExt)) {
+                const canOpenAsPdf = await this.canOpenAsPdf(resolvedPath);
+                if (canOpenAsPdf) {
+                    return await this.pdfFileToLatex(resolvedPath, notice, file.base);
                 }
+
+                // Last resort: some providers still parse extension-less image bytes correctly.
+                resolvedExt = "png";
             }
 
-            throw new Error(`${this.getBackendDisplayName()} OCR failed after ${OLLAMA_OCR_RETRIES} attempts: ${lastError}`);
+            return await this.imageFileToLatex(resolvedPath, notice, file.base, resolvedExt);
         } finally {
             setTimeout(() => notice.hide(), 1000);
         }

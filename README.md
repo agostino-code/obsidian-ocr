@@ -5,7 +5,7 @@
 [![Ollama](https://img.shields.io/badge/Ollama-fff?logo=ollama&logoColor=000)](#)
 [![Obsidian](https://img.shields.io/badge/Obsidian-%23483699.svg?&logo=obsidian&logoColor=white)](#)
 
-Extract text, formulas, tables, and structured content from images directly into your Obsidian notes, powered by [GLM-OCR](https://huggingface.co/zai-org/GLM-OCR).
+Extract text, formulas, tables, and structured content from images and PDFs directly into your Obsidian notes, powered by [GLM-OCR](https://huggingface.co/zai-org/GLM-OCR).
 
 > This project is a fork of [obsidian-latex-ocr](https://github.com/lucasvanmol/obsidian-latex-ocr) by lucasvanmol. The original plugin focused exclusively on LaTeX formula recognition. **Obsidian OCR** extends this to full document OCR: any text, formula, table, or mixed content in an image can be extracted and inserted into your notes.
 
@@ -13,7 +13,7 @@ Extract text, formulas, tables, and structured content from images directly into
 
 ## Features
 
-- **Full OCR** — extract any text from images, not just LaTeX formulas.
+- **Full OCR** — extract any text from images and PDFs, not just LaTeX formulas.
 - **Formula support** — mathematical expressions are recognized and output in LaTeX.
 - **Paste from clipboard** — use a custom command (e.g. `Ctrl+Alt+V`) to OCR an image from your clipboard and insert the result directly.
 - **Context menu** — right-click any image in your vault and choose "Generate OCR text".
@@ -151,7 +151,7 @@ The status bar at the bottom of Obsidian shows the current state of the backend:
 ## File Input Notes
 
 - The ribbon modal supports selecting files and shows the selected filename.
-- Image preview is shown for supported image formats..
+- Image preview is shown for supported image formats; PDF preview is not rendered in the modal.
 
 ---
 

@@ -87,6 +87,8 @@ const DEFAULT_SETTINGS: ObsidianOCRSettings = {
 
 // https://pillow.readthedocs.io/en/stable/handbook/image-file-formats.html
 const IMG_EXTS = ["png", "jpg", "jpeg", "bmp", "dib", "eps", "gif", "ppm", "pbm", "pgm", "pnm", "webp"]
+const PDF_EXT = "pdf"
+const SUPPORTED_EXTS = [...IMG_EXTS, PDF_EXT]
 
 export default class ObsidianOCR extends Plugin {
 	settings: ObsidianOCRSettings;
@@ -128,10 +130,10 @@ export default class ObsidianOCR extends Plugin {
 			}
 		}
 
-		// Right-click "Generate Latex" menu on image files
+		// Right-click "Generate Latex" menu on supported files
 		this.registerEvent(
 			this.app.workspace.on("file-menu", (menu, file) => {
-				if (file instanceof TFile && IMG_EXTS.includes(file.extension)) {
+				if (file instanceof TFile && SUPPORTED_EXTS.includes(file.extension)) {
 					menu.addItem((item) => {
 						item
 							.setTitle("Generate Formula")
