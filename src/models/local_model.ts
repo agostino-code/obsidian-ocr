@@ -48,10 +48,11 @@ type PdfDocumentLike = {
 };
 
 const OLLAMA_OCR_TIMEOUT_MS = 180000;
-const OLLAMA_OCR_RETRIES = 3;
+const OLLAMA_OCR_RETRIES = 6;
 const OLLAMA_OCR_RETRY_DELAY_MS = 5000;
 const OLLAMA_OCR_PROMPT = "Text Recognition:";
-const BACKEND_STARTUP_TIMEOUT_MS = 45000;
+const OLLAMA_OCR_MAX_TOKENS = 4096;
+const BACKEND_STARTUP_TIMEOUT_MS = 180000; // Models can take a long time to load into VRAM
 const BACKEND_STARTUP_POLL_MS = 1000;
 const ARG_TOKEN_REGEX = /"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|[^\s]+/g;
 
@@ -60,6 +61,16 @@ export class LocalModel implements Model {
     plugin_settings: ObsidianOCRSettings;
     statusCheckIntervalLoading = 1000;
     statusCheckIntervalReady = 5000;
+
+    // Circuit breaker for backend reachability
+    private lastUnreachableTime: number = 0;
+    private unreachableCount: number = 0;
+    private readonly CIRCUIT_BREAKER_THRESHOLD = 3;
+    private readonly CIRCUIT_BREAKER_TIMEOUT_MS = 60000;
+
+    // Cache last status result to avoid redundant checks
+    private cachedStatus: { status: Status; msg: string; timestamp: number } | null = null;
+    private readonly STATUS_CACHE_TTL_MS = 2000;
 
     constructor(settings: ObsidianOCRSettings) {
         this.plugin_settings = settings;
@@ -113,7 +124,24 @@ export class LocalModel implements Model {
         this.serverProcess = undefined;
     }
 
-    private async isBackendReachable() {
+    private async isBackendReachable(forceCheck: boolean = false): Promise<boolean> {
+        const now = Date.now();
+
+        // Check circuit breaker
+        if (!forceCheck && this.unreachableCount >= this.CIRCUIT_BREAKER_THRESHOLD) {
+            if (now - this.lastUnreachableTime < this.CIRCUIT_BREAKER_TIMEOUT_MS) {
+                console.debug(`obsidian_ocr: circuit breaker open, skipping reachability check (count: ${this.unreachableCount})`);
+                return false;
+            }
+            // Reset circuit breaker after timeout
+            this.unreachableCount = 0;
+        }
+
+        // Check cache
+        if (!forceCheck && this.cachedStatus && (now - this.cachedStatus.timestamp < this.STATUS_CACHE_TTL_MS)) {
+            return this.cachedStatus.status === Status.Ready;
+        }
+
         const baseUrl = this.getBaseUrl();
         const backend = this.getBackendType();
 
@@ -128,13 +156,21 @@ export class LocalModel implements Model {
                     method: "GET",
                 });
                 if (response.status >= 200 && response.status < 300) {
+                    // Cache success
+                    this.cachedStatus = { status: Status.Ready, msg: "Backend reachable", timestamp: now };
+                    this.unreachableCount = 0;
                     return true;
                 }
-            } catch {
-                // Try the next health endpoint.
+            } catch (err) {
+                console.debug(`obsidian_ocr: backend check failed for ${url}: ${err}`);
             }
         }
 
+        // Cache failure and update circuit breaker
+        this.lastUnreachableTime = now;
+        this.unreachableCount++;
+        this.cachedStatus = { status: Status.Unreachable, msg: "Backend not reachable", timestamp: now };
+        console.debug(`obsidian_ocr: backend unreachable (count: ${this.unreachableCount}/${this.CIRCUIT_BREAKER_THRESHOLD})`);
         return false;
     }
 
@@ -309,6 +345,27 @@ export class LocalModel implements Model {
         });
     }
 
+    private extractRequestErrorMessage(error: unknown, fallbackLabel: string) {
+        if (error && typeof error === "object") {
+            const response = error as { response?: { text?: string; json?: unknown }; message?: string; status?: number; statusText?: string };
+
+            if (typeof response.response?.text === "string" && response.response.text.trim()) {
+                return `${fallbackLabel}: ${response.response.text.trim()}`;
+            }
+
+            if (response.response?.json && typeof response.response.json === "object") {
+                return `${fallbackLabel}: ${JSON.stringify(response.response.json)}`;
+            }
+
+            if (typeof response.message === "string" && response.message.trim()) {
+                const status = typeof response.status === "number" ? ` (status ${response.status}${response.statusText ? ` ${response.statusText}` : ""})` : "";
+                return `${fallbackLabel}: ${response.message.trim()}${status}`;
+            }
+        }
+
+        return `${fallbackLabel}: ${String(error)}`;
+    }
+
     private async waitForBackendReachable(timeoutMs: number) {
         const startedAt = Date.now();
         while (Date.now() - startedAt < timeoutMs) {
@@ -320,26 +377,41 @@ export class LocalModel implements Model {
         return false;
     }
 
-    private async ensureBackendReadyForOCR() {
-        if (await this.isBackendReachable()) {
+    private async ensureBackendReadyForOCR(notice?: Notice) {
+        if (await this.isBackendReachable(true)) {
+            console.log(`obsidian_ocr: backend already reachable at ${this.getBaseUrl()}`);
             return;
         }
 
+        if (notice) {
+            notice.setMessage(`🚀 Starting ${this.getBackendDisplayName()} backend...`);
+        }
+
+        console.log(`obsidian_ocr: checking ${this.getBackendDisplayName()} installation...`);
         await this.checkBackendInstallation();
 
         if (this.serverProcess) {
+            console.log(`obsidian_ocr: waiting for existing backend to become reachable...`);
             const becameReady = await this.waitForBackendReachable(15000);
             if (becameReady) {
+                console.log(`obsidian_ocr: backend became reachable`);
                 return;
             }
+            console.log(`obsidian_ocr: killing unresponsive backend process`);
             this.killServer();
         }
 
+        console.log(`obsidian_ocr: spawning ${this.getBackendDisplayName()} server...`);
         this.serverProcess = await this.spawnBackendServer();
         const reachable = await this.waitForBackendReachable(BACKEND_STARTUP_TIMEOUT_MS);
         if (!reachable) {
             throw new Error(`${this.getBackendDisplayName()} did not become reachable at ${this.getBaseUrl()} within ${Math.round(BACKEND_STARTUP_TIMEOUT_MS / 1000)}s`);
         }
+        console.log(`obsidian_ocr: backend is now reachable at ${this.getBaseUrl()}`);
+        
+        // Give the backend a brief moment to fully initialize its inference engine
+        // before we bombard it with a heavy OCR multimodal payload.
+        await this.sleep(2000);
     }
 
     private async requestOllamaOCR(imageB64: string) {
@@ -359,10 +431,15 @@ export class LocalModel implements Model {
                         },
                     ],
                 }),
+                throw: false,
             }),
             OLLAMA_OCR_TIMEOUT_MS,
             "Ollama OCR request"
         );
+
+        if (response.status >= 400) {
+            throw new Error(`Ollama OCR request failed with status ${response.status}: ${JSON.stringify(response.json || response.text || "")}`);
+        }
 
         const result = response.json as OllamaChatResponse;
         const latex = (result.message?.content ?? result.response ?? "").trim();
@@ -379,7 +456,7 @@ export class LocalModel implements Model {
             requestUrl({
                 url: `${this.getBaseUrl().replace(/\/$/, "")}/v1/chat/completions`,
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                contentType: "application/json",
                 body: JSON.stringify({
                     messages: [
                         {
@@ -391,11 +468,21 @@ export class LocalModel implements Model {
                         },
                     ],
                     temperature: 0,
+                    top_k: 1,
+                    stream: false,
+                    max_tokens: OLLAMA_OCR_MAX_TOKENS,
                 }),
+                throw: false,
             }),
             OLLAMA_OCR_TIMEOUT_MS,
             "llama.cpp OCR request"
-        );
+        ).catch((error) => {
+            throw new Error(this.extractRequestErrorMessage(error, "llama.cpp OCR request failed"));
+        });
+
+        if (response.status >= 400) {
+            throw new Error(`llama.cpp OCR request failed with status ${response.status}: ${JSON.stringify(response.json || response.text || "")}`);
+        }
 
         const result = response.json as LlamaCppChatResponse;
         const content = result.choices?.[0]?.message?.content;
@@ -412,8 +499,8 @@ export class LocalModel implements Model {
         return latex;
     }
 
-    private async prepareBackendForOCR() {
-        await this.ensureBackendReadyForOCR();
+    private async prepareBackendForOCR(notice?: Notice) {
+        await this.ensureBackendReadyForOCR(notice);
 
         if (this.getBackendType() !== "ollama") {
             return;
@@ -455,14 +542,68 @@ export class LocalModel implements Model {
         }
     }
 
+    private getImageMimeType(ext: string) {
+        switch (ext.toLowerCase()) {
+            case "jpg":
+            case "jpeg":
+                return "image/jpeg";
+            case "png":
+                return "image/png";
+            case "webp":
+                return "image/webp";
+            case "gif":
+                return "image/gif";
+            case "bmp":
+            case "dib":
+                return "image/bmp";
+            default:
+                return `image/${ext.toLowerCase()}`;
+        }
+    }
+
+    private loadImage(dataUrl: string) {
+        return new Promise<HTMLImageElement>((resolve, reject) => {
+            const image = new Image();
+            image.onload = () => resolve(image);
+            image.onerror = () => reject(new Error("Could not decode image for OCR"));
+            image.src = dataUrl;
+        });
+    }
+
+    private async normalizeImageFileToPngBase64(filepath: string, ext: string) {
+        const data = fs.readFileSync(filepath);
+        const image = await this.loadImage(`data:${this.getImageMimeType(ext)};base64,${data.toString("base64")}`);
+
+        const canvas = document.createElement("canvas");
+        canvas.width = image.naturalWidth || image.width;
+        canvas.height = image.naturalHeight || image.height;
+
+        const context = canvas.getContext("2d");
+        if (!context) {
+            throw new Error("Could not create canvas context while normalizing image");
+        }
+
+        context.drawImage(image, 0, 0);
+
+        const dataUrl = canvas.toDataURL("image/png");
+        const [, base64] = dataUrl.split(",", 2);
+        if (!base64) {
+            throw new Error("Failed to normalize image for OCR");
+        }
+
+        return base64;
+    }
+
     private async ocrRenderedImage(imageB64: string, ext: string, notice: Notice, label: string) {
         const backend = this.getBackendType();
+        const backendLabel = this.getBackendDisplayName();
         let lastError: unknown;
 
         for (let attempt = 1; attempt <= OLLAMA_OCR_RETRIES; attempt++) {
             try {
                 if (attempt > 1) {
                     notice.setMessage(`⚙️ Generating Latex for ${label}... retry ${attempt}/${OLLAMA_OCR_RETRIES}`)
+                    console.log(`obsidian_ocr: retrying OCR for ${label}, attempt ${attempt}/${OLLAMA_OCR_RETRIES}`);
                 }
 
                 if (backend === "llama.cpp") {
@@ -473,18 +614,38 @@ export class LocalModel implements Model {
             } catch (error) {
                 lastError = error;
                 const isLast = attempt === OLLAMA_OCR_RETRIES;
-                console.warn(`obsidian_ocr: ${this.getBackendDisplayName()} OCR attempt ${attempt}/${OLLAMA_OCR_RETRIES} failed`, error);
+
+                const errorMsg = String(error);
+                // Immediately abort retries on bad requests, as they won't succeed on retry
+                if (errorMsg.includes("status 400") || errorMsg.includes("status 404") || errorMsg.includes("status 401")) {
+                    console.warn(`obsidian_ocr: ${backendLabel} OCR failed with unrecoverable error for ${label}: ${error}`);
+                    break;
+                }
+
+                console.warn(`obsidian_ocr: ${backendLabel} OCR attempt ${attempt}/${OLLAMA_OCR_RETRIES} failed for ${label}: ${error}`);
                 if (!isLast) {
-                    await this.ensureBackendReadyForOCR();
+                    await this.ensureBackendReadyForOCR(notice);
                     await this.sleep(OLLAMA_OCR_RETRY_DELAY_MS);
                 }
             }
         }
 
-        throw new Error(`${this.getBackendDisplayName()} OCR failed after ${OLLAMA_OCR_RETRIES} attempts: ${lastError}`);
+        const errorMsg = lastError instanceof Error ? lastError.message : String(lastError);
+        throw new Error(`${backendLabel} OCR failed after ${OLLAMA_OCR_RETRIES} attempts: ${errorMsg}`);
     }
 
     private async imageFileToLatex(filepath: string, notice: Notice, label: string, ext: string) {
+        const backend = this.getBackendType();
+
+        if (backend === "llama.cpp") {
+            try {
+                const imageB64 = await this.normalizeImageFileToPngBase64(filepath, ext);
+                return await this.ocrRenderedImage(imageB64, "png", notice, label);
+            } catch (error) {
+                console.warn(`obsidian_ocr: image normalization failed for ${label}, falling back to raw bytes`, error);
+            }
+        }
+
         const data = fs.readFileSync(filepath);
         const imageB64 = data.toString("base64");
         return await this.ocrRenderedImage(imageB64, ext, notice, label);
@@ -597,7 +758,7 @@ export class LocalModel implements Model {
         }
 
         // Strip accidental wrapping quotes from copied/pasted paths.
-        normalized = normalized.replace(/^['\"]+|['\"]+$/g, "");
+        normalized = normalized.replace(/^['"]+|['"]+$/g, "");
         if (!normalized) {
             return "";
         }
@@ -647,10 +808,11 @@ export class LocalModel implements Model {
 
         let resolvedExt = this.resolveInputExt(resolvedPath, ext);
 
-        const notice = new Notice(`⚙️ Generating Latex for ${file.base}...`, 0);
+        const notice = new Notice(`⚙️ Analyzing ${file.base}...`, 0);
 
         try {
-            await this.prepareBackendForOCR();
+            await this.prepareBackendForOCR(notice);
+            notice.setMessage(`⚙️ Generating Latex for ${file.base}...`);
 
             if (resolvedExt === PDF_EXT) {
                 return await this.pdfFileToLatex(resolvedPath, notice, file.base);
@@ -673,20 +835,31 @@ export class LocalModel implements Model {
     }
 
     async status() {
+        const backend = this.getBackendType();
+        const backendLabel = this.getBackendDisplayName();
+        const now = Date.now();
+
         try {
-            const backend = this.getBackendType();
-            const backendLabel = this.getBackendDisplayName();
             const reachable = await this.isBackendReachable();
+
             if (!reachable) {
-                await this.checkBackendInstallation();
+                // Only log check failures at debug level so we do not spam consoles
+                try {
+                    await this.checkBackendInstallation();
+                } catch(e) {
+                    console.debug(`obsidian_ocr: status check - installation check failed: ${e}`);
+                }
+                const msg = `${backendLabel} is not reachable at ${this.getBaseUrl()}.`;
+                console.debug(`obsidian_ocr: status check - ${msg}`);
                 return {
                     status: Status.Unreachable,
-                    msg: `${backendLabel} is not reachable at ${this.getBaseUrl()}.`,
+                    msg,
                 };
             }
 
             if (backend === "llama.cpp") {
-                return { status: Status.Ready, msg: "llama.cpp server is ready" };
+                console.debug(`obsidian_ocr: status check - llama.cpp server ready at ${this.getBaseUrl()}`);
+                return { status: Status.Ready, msg: "llama.cpp server is ready", lastChecked: now };
             }
 
             const models = await this.getInstalledModels();
@@ -696,21 +869,30 @@ export class LocalModel implements Model {
             });
 
             if (!modelFound) {
+                const msg = `Model '${this.plugin_settings.ollamaModel}' not found. Run: ollama pull ${this.plugin_settings.ollamaModel}`;
+                console.warn(`obsidian_ocr: status check - ${msg}`);
                 return {
                     status: Status.Misconfigured,
-                    msg: `Model '${this.plugin_settings.ollamaModel}' not found in Ollama. Run: ollama pull ${this.plugin_settings.ollamaModel}`,
+                    msg,
                 };
             }
 
-            return { status: Status.Ready, msg: "Ollama is ready" };
+            console.debug(`obsidian_ocr: status check - Ollama ready at ${this.getBaseUrl()}, model: ${this.plugin_settings.ollamaModel}`);
+            return { status: Status.Ready, msg: "Ollama is ready", lastChecked: now };
         } catch (err) {
-            return { status: Status.Misconfigured, msg: `${err}` };
+            const msg = `${err}`;
+            console.debug(`obsidian_ocr: status check failed:`, err);
+            return { status: Status.Misconfigured, msg };
         }
     }
 
     async start() {
         const backendLabel = this.getBackendDisplayName();
-        const reachable = await this.isBackendReachable();
+        // Reset circuit breaker when user explicitly starts
+        this.unreachableCount = 0;
+        this.cachedStatus = null;
+
+        const reachable = await this.isBackendReachable(true);
         if (reachable) {
             console.log(`obsidian_ocr: ${backendLabel} already running`);
             return;

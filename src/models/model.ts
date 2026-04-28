@@ -9,6 +9,13 @@ export enum Status {
     Misconfigured
 }
 
+export interface StatusResult {
+    status: Status;
+    msg: string;
+    reason?: string;
+    lastChecked?: number;
+}
+
 export default interface Model {
     // Interval (ms) of statusCheck message when previous message was unsuccessful
     statusCheckIntervalLoading: number;
