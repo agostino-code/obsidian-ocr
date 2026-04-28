@@ -1,6 +1,6 @@
 {
 	"name": "obsidian-ocr",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"description": "OCR for Obsidian: extract text and formulas from images, locally or in the cloud.",
 	"main": "main.js",
 	"scripts": {
