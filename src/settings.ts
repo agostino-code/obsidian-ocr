@@ -27,7 +27,7 @@ export default class ObsidianOCRSettingsTab extends PluginSettingTab {
                 window.clearTimeout(saveDebounceId);
             }
             saveDebounceId = window.setTimeout(() => {
-                this.plugin.saveSettings();
+                void this.plugin.saveSettings();
                 saveDebounceId = null;
             }, 250);
         };

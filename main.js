@@ -747,15 +747,17 @@ var LocalModel = class {
 // src/status_bar.ts
 var StatusBar = class {
   constructor(plugin) {
+    this.started = false;
+    this.should_stop = false;
     this.plugin = plugin;
     this.span = plugin.addStatusBarItem();
-    this.span.createEl("span", { text: "Obsidian OCR \u274C" });
-    this.updateStatusBar();
+    this.span.createSpan({ text: "Obsidian OCR \u274C" });
+    void this.updateStatusBar();
     if (!plugin.settings.showStatusBar) {
       this.hide();
     }
     this.should_stop = false;
-    this.startStatusBar();
+    void this.startStatusBar();
   }
   // Update the status bar based on current OCR backend availability.
   async updateStatusBar() {
@@ -828,7 +830,13 @@ var path2 = __toESM(require("path"));
 
 // src/utils.ts
 async function picker(message, properties) {
-  const dirPath = window.electron.remote.dialog.showOpenDialogSync({
+  var _a2, _b2;
+  const win = typeof window !== "undefined" ? window : void 0;
+  const dialog = (_b2 = (_a2 = win == null ? void 0 : win.electron) == null ? void 0 : _a2.remote) == null ? void 0 : _b2.dialog;
+  if (!dialog) {
+    return void 0;
+  }
+  const dirPath = dialog.showOpenDialogSync({
     title: message,
     properties
   });
@@ -1012,12 +1020,18 @@ var fs3 = __toESM(require("fs"));
 var safeStorage;
 var _a, _b, _c;
 try {
-  const Electron = require("electron");
-  safeStorage = ((_a = Electron == null ? void 0 : Electron.remote) == null ? void 0 : _a.safeStorage) || (Electron == null ? void 0 : Electron.safeStorage) || typeof window !== "undefined" && ((_c = (_b = window.electron) == null ? void 0 : _b.remote) == null ? void 0 : _c.safeStorage);
+  const win = typeof window !== "undefined" ? window : void 0;
+  const electronSafeStorage = ((_a = win == null ? void 0 : win.electron) == null ? void 0 : _a.safeStorage) || ((_c = (_b = win == null ? void 0 : win.electron) == null ? void 0 : _b.remote) == null ? void 0 : _c.safeStorage);
+  if (electronSafeStorage && typeof electronSafeStorage.isEncryptionAvailable === "function") {
+    safeStorage = electronSafeStorage;
+  } else {
+    safeStorage = {
+      isEncryptionAvailable: () => false,
+      encryptString: (val) => Buffer.from(val, "utf-8"),
+      decryptString: (buf) => buf.toString("utf-8")
+    };
+  }
 } catch (e) {
-  safeStorage = void 0;
-}
-if (!safeStorage) {
   safeStorage = {
     isEncryptionAvailable: () => false,
     encryptString: (val) => Buffer.from(val, "utf-8"),
@@ -1277,7 +1291,7 @@ var ObsidianOCRSettingsTab = class extends import_obsidian4.PluginSettingTab {
         window.clearTimeout(saveDebounceId);
       }
       saveDebounceId = window.setTimeout(() => {
-        this.plugin.saveSettings();
+        void this.plugin.saveSettings();
         saveDebounceId = null;
       }, 250);
     };

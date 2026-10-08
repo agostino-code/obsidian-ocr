@@ -50,7 +50,7 @@ export async function preprocessImageBuffer(
         };
     }
 
-    const canvas = document.createElement("canvas");
+    const canvas = createEl("canvas");
     canvas.width = targetWidth;
     canvas.height = targetHeight;
 
@@ -59,25 +59,22 @@ export async function preprocessImageBuffer(
         throw new Error("Could not initialize 2D canvas context for image optimization");
     }
 
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = "high";
     ctx.drawImage(image, 0, 0, targetWidth, targetHeight);
 
-    // Prefer JPEG for photos/scans to keep base64 payloads compact, or PNG if alpha transparency is present.
-    const targetMime = inputMimeType === "image/png" ? "image/png" : "image/jpeg";
-    const quality = targetMime === "image/jpeg" ? 0.92 : undefined;
-    const outDataUrl = canvas.toDataURL(targetMime, quality);
-    const [, base64] = outDataUrl.split(",", 2);
-
-    if (!base64) {
-        throw new Error("Failed to export optimized image canvas");
-    }
+    // Export as JPEG with 0.85 quality for photographic/dense images or WebP/PNG
+    const exportMime = inputMimeType === "image/png" ? "image/png" : "image/jpeg";
+    const quality = exportMime === "image/jpeg" ? 0.85 : undefined;
+    const resizedDataUrl = canvas.toDataURL(exportMime, quality);
+    const prefix = `data:${exportMime};base64,`;
+    const base64Data = resizedDataUrl.startsWith(prefix)
+        ? resizedDataUrl.slice(prefix.length)
+        : resizedDataUrl.replace(/^data:[^;]+;base64,/, "");
 
     return {
-        base64,
-        mimeType: targetMime,
+        base64: base64Data,
+        mimeType: exportMime,
         width: targetWidth,
         height: targetHeight,
-        resized,
+        resized: true,
     };
 }

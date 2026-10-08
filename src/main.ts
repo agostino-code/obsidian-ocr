@@ -73,7 +73,7 @@ export interface ObsidianOCRSettings {
 	useLocalModel: boolean;
 
 	/** Hugging face API key */
-	hfApiKey: string | ArrayBuffer;
+	hfApiKey: string | Buffer | ArrayBuffer;
 
 	/** Obfuscated key shown in settings */
 	obfuscatedKey: string;

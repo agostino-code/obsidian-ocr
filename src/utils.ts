@@ -1,17 +1,37 @@
-declare global {
-    interface Window {
-        electron: any;
-    }
+interface ElectronDialog {
+    showOpenDialogSync(options: {
+        title: string;
+        properties: string[];
+    }): string[] | undefined;
+}
+
+interface ElectronRemote {
+    dialog?: ElectronDialog;
+}
+
+interface ElectronNamespace {
+    remote?: ElectronRemote;
+}
+
+interface WindowWithElectronDialog {
+    electron?: ElectronNamespace;
 }
 
 export async function picker(
     message: string,
     properties: string[]
-) {
-    const dirPath: string[] | undefined = window.electron.remote.dialog.showOpenDialogSync({
+): Promise<string | string[] | undefined> {
+    const win = (typeof window !== "undefined" ? window : undefined) as WindowWithElectronDialog | undefined;
+    const dialog = win?.electron?.remote?.dialog;
+    if (!dialog) {
+        return undefined;
+    }
+
+    const dirPath = dialog.showOpenDialogSync({
         title: message,
         properties
     });
+
     if (!dirPath || dirPath.length === 0) {
         return undefined;
     }
@@ -134,10 +154,6 @@ export function decodeHtmlEntities(str: string): string {
 
 /**
  * Sanitizes math formulas inside a Markdown table cell.
- * In Markdown tables, unescaped `|` acts as a column delimiter, which breaks
- * LaTeX notation like `|x|` (norm/absolute value).
- * Inside math blocks (`$...$`), `|` must be preserved as `\vert` or `|` without breaking the table.
- * In Obsidian tables, `\|` inside `$ ... $` is rendered properly.
  */
 function sanitizeTableCell(content: string): string {
     let text = decodeHtmlEntities(content).trim();
@@ -181,7 +197,7 @@ export function htmlTableToMarkdown(content: string): string {
             const cells: string[] = [];
             const cellMatches = tr.match(/<(?:td|th)[^>]*>([\s\S]*?)<\/(?:td|th)>/gi) || [];
             for (const cell of cellMatches) {
-                const rawCellText: string = (cell as string).replace(/<(?:td|th)[^>]*>([\s\S]*?)<\/(?:td|th)>/i, "$1");
+                const rawCellText: string = cell.replace(/<(?:td|th)[^>]*>([\s\S]*?)<\/(?:td|th)>/i, "$1");
                 cells.push(sanitizeTableCell(rawCellText));
             }
             if (cells.length > 0) {

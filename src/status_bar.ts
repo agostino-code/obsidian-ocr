@@ -1,23 +1,22 @@
 import ObsidianOCR from "main";
 import { Status } from "./models/model";
 
-
 export class StatusBar {
-    span: HTMLSpanElement;
+    span: HTMLElement;
     plugin: ObsidianOCR;
-    private started: boolean;
-    private should_stop: boolean;
+    private started = false;
+    private should_stop = false;
 
     constructor(plugin: ObsidianOCR) {
         this.plugin = plugin;
         this.span = plugin.addStatusBarItem();
-        this.span.createEl("span", { text: "Obsidian OCR ❌" });
-        this.updateStatusBar();
+        this.span.createSpan({ text: "Obsidian OCR ❌" });
+        void this.updateStatusBar();
         if (!plugin.settings.showStatusBar) {
             this.hide();
         }
         this.should_stop = false;
-        this.startStatusBar();
+        void this.startStatusBar();
     }
 
     // Update the status bar based on current OCR backend availability.
@@ -52,10 +51,10 @@ export class StatusBar {
     // This function halts when `this.stopped` is True.
     //
     // This function should only be called once.
-    private async startStatusBar() {
+    private async startStatusBar(): Promise<void> {
         if (this.started) {
             console.error("Attempted to start status bar when already started");
-            return
+            return;
         }
         let prevStatus = { status: Status.Loading, msg: "" };
         let loadingSleepTime = this.plugin.model.statusCheckIntervalReady;
@@ -85,16 +84,15 @@ export class StatusBar {
         this.started = false;
     }
 
-
-    hide() {
+    hide(): void {
         this.span.hide();
     }
 
-    show() {
+    show(): void {
         this.span.show();
     }
 
-    stop() {
+    stop(): void {
         this.should_stop = true;
     }
 }
