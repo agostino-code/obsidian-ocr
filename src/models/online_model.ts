@@ -1,0 +1,291 @@
+import Model, { Status } from "./model";
+import * as fs from 'fs'
+import { ObsidianOCRSettings } from "main";
+import safeStorage from "safeStorage";
+import { Notice, requestUrl } from "obsidian";
+import * as path from "path";
+
+const HF_OCR_MODEL = "zai-org/GLM-OCR";
+const HF_LAYOUT_PARSING_URL = "https://router.huggingface.co/zai-org/api/paas/v4/layout_parsing";
+const HF_ROUTER_MODEL = "glm-ocr"
+const SUPPORTED_LAYOUT_PARSING_TYPES = ["image/jpeg", "image/png", "application/pdf"]
+
+function getImageContentType(filepath: string): string {
+    const ext = path.extname(filepath).toLowerCase()
+    if (ext === ".jpg" || ext === ".jpeg") {
+        return "image/jpeg"
+    }
+    if (ext === ".png") {
+        return "image/png"
+    }
+    if (ext === ".pdf") {
+        return "application/pdf"
+    }
+    return "application/octet-stream"
+}
+
+function extractRouterError(response: any): string {
+    if (!response || typeof response !== "object") {
+        return ""
+    }
+
+    const errorValue = response.error
+    if (typeof errorValue === "string" && errorValue.trim()) {
+        return errorValue.trim()
+    }
+
+    if (errorValue && typeof errorValue === "object") {
+        const msg = (errorValue as any).message
+        if (typeof msg === "string" && msg.trim()) {
+            return msg.trim()
+        }
+    }
+
+    return ""
+}
+
+function extractLayoutText(response: any): string {
+    if (!response || typeof response !== "object") {
+        return ""
+    }
+
+    const layoutDetails = (response as any).layout_details
+    if (Array.isArray(layoutDetails)) {
+        const parts: string[] = []
+        for (const page of layoutDetails) {
+            if (!Array.isArray(page)) {
+                continue
+            }
+            for (const block of page) {
+                const text = block?.content
+                if (typeof text === "string" && text.trim()) {
+                    parts.push(text.trim())
+                }
+            }
+        }
+        if (parts.length > 0) {
+            return parts.join("\n\n")
+        }
+    }
+
+    return ""
+}
+
+export default class ApiModel implements Model {
+    settings: ObsidianOCRSettings
+    apiKey: string
+    statusCheckIntervalLoading = 5000;
+    statusCheckIntervalReady = 15000;
+
+    // Circuit breaker for API reachability
+    private lastUnreachableTime: number = 0;
+    private unreachableCount: number = 0;
+    private readonly CIRCUIT_BREAKER_THRESHOLD = 3;
+    private readonly CIRCUIT_BREAKER_TIMEOUT_MS = 60000;
+
+    // Cache last status result to avoid redundant checks
+    private cachedStatus: { status: Status; msg: string; timestamp: number } | null = null;
+    private readonly STATUS_CACHE_TTL_MS = 1000 * 60 * 60; // 1 hour
+
+    constructor(settings: ObsidianOCRSettings) {
+        this.reloadSettings(settings)
+    }
+
+    reloadSettings(settings: ObsidianOCRSettings) {
+        this.cachedStatus = null;
+        this.settings = settings
+        try {
+            if (safeStorage.isEncryptionAvailable()) {
+                this.apiKey = safeStorage.decryptString(Buffer.from(settings.hfApiKey as ArrayBuffer))
+            } else {
+                this.apiKey = settings.hfApiKey as string
+            }
+        } catch (error) {
+            new Notice(`❌ There was an error loading your API key`)
+            console.error('Error loading API key:', error);
+            this.apiKey = ""
+        }
+    }
+
+
+    load() {
+        console.log("obsidian_ocr: API model loaded.")
+    }
+
+    start() { }
+
+    unload() { }
+
+    private async requestLayoutParsing(data: Buffer, contentType: string): Promise<any> {
+        const payload = {
+            file: `data:${contentType};base64,${data.toString("base64")}`,
+            model: HF_ROUTER_MODEL,
+        }
+
+        const response = await requestUrl({
+            url: HF_LAYOUT_PARSING_URL,
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${this.apiKey}`,
+                "Accept": "application/json",
+            },
+            contentType: "application/json",
+            body: JSON.stringify(payload),
+        })
+
+        if (response.json !== undefined) {
+            return response.json
+        }
+        if (response.text) {
+            return JSON.parse(response.text)
+        }
+
+        throw new Error("Empty response from Hugging Face API")
+    }
+
+    private ensureReadableFile(filepath: string) {
+        if (!filepath.trim()) {
+            throw new Error("No file path provided")
+        }
+
+        if (!fs.existsSync(filepath)) {
+            throw new Error(`File does not exist: ${filepath}`)
+        }
+
+        const stat = fs.statSync(filepath)
+        if (!stat.isFile()) {
+            throw new Error(`Selected path is not a file: ${filepath}`)
+        }
+    }
+
+    private normalizeInputPath(filepath: string) {
+        let normalized = (filepath ?? "").trim()
+        if (!normalized) {
+            return ""
+        }
+
+        normalized = normalized.replace(/^['"]+|['"]+$/g, "")
+        if (!normalized) {
+            return ""
+        }
+
+        if (normalized.toLowerCase().startsWith("file://")) {
+            try {
+                const url = new URL(normalized)
+                normalized = decodeURIComponent(url.pathname)
+                if (/^\/[A-Za-z]:\//.test(normalized)) {
+                    normalized = normalized.substring(1)
+                }
+            } catch {
+                // Keep original value if URL parsing fails.
+            }
+        }
+
+        normalized = normalized.trim()
+        if (!normalized) {
+            return ""
+        }
+
+        return path.normalize(normalized)
+    }
+
+    async imgfileToLatex(filepath: string): Promise<string> {
+        const resolvedPath = this.normalizeInputPath(filepath)
+        this.ensureReadableFile(resolvedPath)
+
+        const file = path.parse(resolvedPath)
+        const notice = new Notice(`⚙️ Generating Latex for ${file.base}...`, 0);
+
+        const contentType = getImageContentType(resolvedPath)
+        if (!SUPPORTED_LAYOUT_PARSING_TYPES.includes(contentType)) {
+            throw new Error(`Unsupported file type: ${contentType}. Supported: JPG, PNG, PDF`)
+        }
+
+        const data = fs.readFileSync(resolvedPath);
+        console.log(`obsidian_ocr: sending ${file.base} (${data.length} bytes) to Hugging Face API`);
+
+        try {
+            const response = await this.requestLayoutParsing(data, contentType)
+            const routerError = extractRouterError(response)
+            if (routerError) {
+                throw new Error(`Hugging Face router error: ${routerError}`)
+            }
+
+            console.debug(`obsidian_ocr: API response received for ${file.base}`);
+            setTimeout(() => notice.hide(), 1000)
+
+            const latex = typeof response === "string"
+                ? response
+                : (
+                    extractLayoutText(response)
+                    || response?.generated_text
+                    || response?.[0]?.generated_text
+                    || response?.text
+                    || response?.result?.text
+                    || response?.output_text
+                )
+            if (latex) {
+                return latex
+            } else {
+                throw new Error(`Malformed response from ${HF_OCR_MODEL}: ${JSON.stringify(response)}`)
+            }
+        } catch (error) {
+            setTimeout(() => notice.hide(), 1000);
+            console.error(`obsidian_ocr: API request failed for ${file.base}: ${error}`);
+            throw error;
+        }
+    }
+
+
+    async status() {
+        const now = Date.now();
+
+        if (this.apiKey === "") {
+            console.warn("obsidian_ocr: status check - API key required");
+            return { status: Status.Misconfigured, msg: "API key required", lastChecked: now };
+        }
+
+        // Check circuit breaker
+        if (this.unreachableCount >= this.CIRCUIT_BREAKER_THRESHOLD) {
+            if (now - this.lastUnreachableTime < this.CIRCUIT_BREAKER_TIMEOUT_MS) {
+                console.debug(`obsidian_ocr: circuit breaker open for API (count: ${this.unreachableCount})`);
+                return {
+                    status: Status.Unreachable,
+                    msg: "API temporarily unavailable (circuit breaker open)",
+                    lastChecked: now,
+                };
+            }
+            this.unreachableCount = 0;
+        }
+
+        // Check cache
+        if (this.cachedStatus && (now - this.cachedStatus.timestamp < this.STATUS_CACHE_TTL_MS)) {
+            return this.cachedStatus;
+        }
+
+        try {
+            await requestUrl({
+                url: "https://huggingface.co/api/whoami-v2",
+                headers: { Authorization: `Bearer ${this.apiKey}` },
+                method: "GET",
+            });
+
+            this.unreachableCount = 0;
+            this.cachedStatus = { status: Status.Ready, msg: "API key is working", timestamp: now };
+            console.debug("obsidian_ocr: status check - API key is valid");
+            return { status: Status.Ready, msg: "API key is working", lastChecked: now };
+        } catch (response: any) {
+            this.lastUnreachableTime = now;
+            this.unreachableCount++;
+            this.cachedStatus = { status: Status.Unreachable, msg: `API error: ${response?.status || response}`, timestamp: now };
+
+            if (response?.status === 400 || response?.status === 401) {
+                console.warn(`obsidian_ocr: status check - unauthorized API key`);
+                return { status: Status.Misconfigured, msg: "Unauthorized: check your API key in the settings", lastChecked: now };
+            }
+
+            console.warn(`obsidian_ocr: status check - API unreachable (${response?.status || response})`);
+            return { status: Status.Unreachable, msg: `Got ${response?.status || response}`, lastChecked: now };
+        }
+    }
+}
