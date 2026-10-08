@@ -193,7 +193,10 @@ export default class ObsidianOCRSettingsTab extends PluginSettingTab {
 
         const API_CONF_TEXT = "HuggingFace API Configuration"
         const getLocalConfText = () => `Local ${getLocalBackendLabel()} Model Configuration`
-        const configuration_text = containerEl.createEl("h5", { text: API_CONF_TEXT })
+        const configuration_setting = new Setting(containerEl).setName(API_CONF_TEXT).setHeading()
+        const configuration_text = {
+            setText: (text: string) => configuration_setting.setName(text)
+        }
         if (this.plugin.settings.useLocalModel) {
             configuration_text.setText(getLocalConfText())
         }

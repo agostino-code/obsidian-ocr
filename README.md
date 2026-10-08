@@ -103,9 +103,27 @@ Running GLM-OCR locally in GGUF format requires **less than 1.2 GB of VRAM**, ma
 
 ## 🛠️ Requirements & Compatibility
 
-- **Obsidian**: v0.15.0 or newer.
+- **Obsidian**: v1.4.0 or newer.
 - **Operating Systems**: Windows, macOS, Linux (Desktop only).
 - **Supported File Types**: PNG, JPG, JPEG, WEBP, BMP, GIF, PDF.
+
+---
+
+## 🔒 Security & Disclosures
+
+In accordance with the [Obsidian Developer Policies](https://docs.obsidian.md/community-directory/developer-policies):
+
+- **Desktop Only (`isDesktopOnly: true`)**: This plugin is strictly for desktop platforms because local Vision-Language Model execution requires native binary execution and filesystem access.
+- **Shell Execution (`child_process`)**:
+  - Used exclusively to spawn and manage the local inference servers chosen and configured by the user (`llama-server.exe` or `ollama`).
+  - The plugin does **not** execute arbitrary shell commands. It only spawns the configured local server executable with inference parameters (such as `--port`, `-m`, `--mmproj`, `-c`).
+- **Filesystem Access (`fs`)**:
+  - **Local Model Files**: Reads user-selected local model weights (`.gguf` files) and local server executables configured in settings.
+  - **Vault Files & Images**: Reads user-selected image and PDF files from the vault or file picker to convert them into base64 visual inputs for OCR processing.
+  - No system files outside the configured paths and selected attachments are modified or deleted.
+- **Network Use**:
+  - **Local Mode (Default)**: Connects strictly to `localhost` / `127.0.0.1` (to the local `llama-server` or Ollama HTTP REST API). Zero data leaves your computer.
+  - **Cloud Mode (Optional)**: If and only if the user explicitly switches the backend to Hugging Face API, image data is transmitted directly over HTTPS to Hugging Face Inference API using the user-provided API key.
 
 ---
 

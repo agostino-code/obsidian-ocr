@@ -5,7 +5,6 @@
 */
 
 import { Notice, Plugin, TFile, FileSystemAdapter, Editor } from 'obsidian';
-import clipboard from 'clipboardy';
 import * as path from 'path';
 import * as fs from 'fs';
 import { LocalModel } from "models/local_model"
@@ -14,7 +13,7 @@ import { StatusBar } from "status_bar";
 import { ObsidianOCRModal } from 'modal';
 import ApiModel from 'models/online_model';
 import ObsidianOCRSettingsTab from 'settings';
-import { normalizeMathForObsidian } from 'utils';
+import { normalizeMathForObsidian, copyToClipboard } from 'utils';
 
 export type OCRMode = 'auto' | 'document' | 'describe' | 'formulas' | 'text' | 'tables' | 'custom';
 
@@ -161,7 +160,7 @@ export default class ObsidianOCR extends Plugin {
 								this.model.imgfileToLatex(path.join(this.vaultPath, file.path)).then(async (latex) => {
 									const normalizedLatex = normalizeMathForObsidian(latex)
 									try {
-										await clipboard.write(normalizedLatex)
+										await copyToClipboard(normalizedLatex)
 									} catch (err) {
 										console.error(err);
 										new Notice(`⚠️ Couldn't copy to clipboard because document isn't focused`)

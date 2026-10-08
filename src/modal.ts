@@ -1,9 +1,8 @@
-import clipboard from "clipboardy";
 import ObsidianOCR from "main";
 import { Modal, App, Setting, TFile, Notice } from "obsidian";
 import * as fs from "fs";
 import * as path from "path";
-import { picker, normalizeMathForObsidian } from "utils";
+import { picker, normalizeMathForObsidian, copyToClipboard } from "utils";
 
 function getPreviewDataUrl(filepath: string): string | null {
     if (!fs.existsSync(filepath) || !fs.statSync(filepath).isFile()) {
@@ -98,7 +97,7 @@ export class ObsidianOCRModal extends Modal {
                     plugin.model.imgfileToLatex(imagePath).then(async (latex) => {
                             const normalizedLatex = normalizeMathForObsidian(latex)
                             try {
-                                await clipboard.write(normalizedLatex)
+                                await copyToClipboard(normalizedLatex)
                             } catch (err) {
                                 console.error(err);
                                 new Notice(`⚠️ Couldn't copy to clipboard because document isn't focused`)
