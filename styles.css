@@ -1,0 +1,23 @@
+.obsidian-ocr-modal .image-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    width: 100%;
+    max-height: 50vh;
+    overflow: hidden;
+    margin-bottom: var(--size-4-2);
+}
+
+.obsidian-ocr-modal .image-container img {
+    display: block;
+    max-width: 100%;
+    max-height: 50vh;
+    object-fit: contain;
+}
+
+.obsidian-ocr-modal .selected-file-name {
+    margin: 0 0 var(--size-4-2) 0;
+    color: var(--text-muted);
+    font-size: var(--font-ui-small);
+    word-break: break-word;
+}
