@@ -1,0 +1,10 @@
+{
+	"id": "vlm-ocr",
+	"name": "VLMs OCR",
+	"minAppVersion": "0.15.0",
+	"description": "Extract text, math formulas (LaTeX), and tables from images and PDFs, or generate detailed descriptions of charts and diagrams using local or cloud VLMs.",
+	"author": "Agostino Cesarano",
+	"authorUrl": "https://github.com/agostino-code",
+	"isDesktopOnly": true,
+	"version": "1.1.0"
+}
