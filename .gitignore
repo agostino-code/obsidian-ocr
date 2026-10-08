@@ -29,4 +29,8 @@ model_cache
 __pycache__
 .clipboard_images
 
+# Local standalone binaries and models
+tools/
+models/
+
 AGENTS.md

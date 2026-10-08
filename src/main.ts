@@ -16,7 +16,21 @@ import ApiModel from 'models/online_model';
 import ObsidianOCRSettingsTab from 'settings';
 import { normalizeMathForObsidian } from 'utils';
 
+export type OCRMode = 'auto' | 'document' | 'describe' | 'formulas' | 'text' | 'tables' | 'custom';
+
 export interface ObsidianOCRSettings {
+	/** Active OCR mode */
+	ocrMode: OCRMode;
+
+	/** Custom prompt for vision model */
+	customPrompt: string;
+
+	/** Max image dimension in pixels for downscaling (0 to disable) */
+	maxImageDimension: number;
+
+	/** Process clipboard images directly in RAM */
+	inMemoryClipboard: boolean;
+
 	/** Legacy setting retained for backwards compatibility */
 	pythonPath: string;
 
@@ -67,6 +81,10 @@ export interface ObsidianOCRSettings {
 }
 
 const DEFAULT_SETTINGS: ObsidianOCRSettings = {
+	ocrMode: 'auto',
+	customPrompt: 'Text Recognition:',
+	maxImageDimension: 1536,
+	inMemoryClipboard: true,
 	pythonPath: 'python3',
 	cacheDirPath: '',
 	ollamaPath: 'ollama',

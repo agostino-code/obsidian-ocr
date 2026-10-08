@@ -1,5 +1,5 @@
 import { Status } from "models/model";
-import ObsidianOCR from "main";
+import ObsidianOCR, { OCRMode } from "main";
 import { LocalModel } from "models/local_model";
 import ApiModel from "models/online_model";
 import { PluginSettingTab, App, Setting, Notice, TextComponent } from "obsidian";
@@ -48,6 +48,85 @@ export default class ObsidianOCRSettingsTab extends PluginSettingTab {
                     }
                     this.plugin.settings.showStatusBar = value
                     await this.plugin.saveSettings()
+                }));
+
+        const customPromptSetting = new Setting(containerEl)
+            .setName("Custom prompt")
+            .setDesc("Prompt sent to the vision OCR model when OCR Mode is set to 'Custom'.")
+            .addText(text => text
+                .setPlaceholder("Text Recognition:")
+                .setValue(this.plugin.settings.customPrompt || "")
+                .onChange(value => {
+                    this.plugin.settings.customPrompt = value;
+                    saveSettingsDebounced();
+                }));
+
+        const refreshCustomPromptVisibility = () => {
+            if (this.plugin.settings.ocrMode === "custom") {
+                customPromptSetting.settingEl.show();
+            } else {
+                customPromptSetting.settingEl.hide();
+            }
+        };
+
+        new Setting(containerEl)
+            .setName("OCR mode")
+            .setDesc("Choose parsing strategy: 'Auto-detect' intelligently classifies and extracts documents, formulas, tables, or generates detailed descriptions for charts and diagrams.")
+            .addDropdown(dropdown => dropdown
+                .addOption("auto", "Auto-detect (Smart: Text, Formulas, Tables, or Chart/Image Description)")
+                .addOption("describe", "Describe Image / Chart / Diagram")
+                .addOption("document", "Full Document (Markdown & LaTeX)")
+                .addOption("formulas", "Math Formulas Only (LaTeX)")
+                .addOption("text", "Plain Text Only")
+                .addOption("tables", "Tables (Markdown Table Format)")
+                .addOption("custom", "Custom Prompt")
+                .setValue(this.plugin.settings.ocrMode || "auto")
+                .onChange(async (value) => {
+                    this.plugin.settings.ocrMode = value as OCRMode;
+                    refreshCustomPromptVisibility();
+                    await this.plugin.saveSettings();
+                }));
+
+        refreshCustomPromptVisibility();
+
+        new Setting(containerEl)
+            .setName("Max image dimension (pixels)")
+            .setDesc("Downscale oversized images proportionally to fit this dimension. Dramatically conserves VRAM and speeds up inference on GPUs with 2GB-4GB (1536 recommended, 0 to disable).")
+            .addText(text => text
+                .setPlaceholder("1536")
+                .setValue(String(this.plugin.settings.maxImageDimension ?? 1536))
+                .onChange(value => {
+                    const parsed = parseInt(value.trim(), 10);
+                    this.plugin.settings.maxImageDimension = isNaN(parsed) ? 1536 : Math.max(0, parsed);
+                    saveSettingsDebounced();
+                }));
+
+        new Setting(containerEl)
+            .setName("In-memory clipboard processing")
+            .setDesc("Process clipboard images directly in RAM without saving temporary image files to disk.")
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.inMemoryClipboard ?? true)
+                .onChange(async (value) => {
+                    this.plugin.settings.inMemoryClipboard = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName("Low-VRAM optimization preset")
+            .setDesc("Configure recommended performance settings for 2GB-4GB GPUs (1536px downscale, in-memory clipboard pipeline, and llama.cpp GLM-OCR args).")
+            .addButton(button => button
+                .setButtonText("Apply Low-VRAM Preset")
+                .setCta()
+                .onClick(async () => {
+                    this.plugin.settings.maxImageDimension = 1536;
+                    this.plugin.settings.inMemoryClipboard = true;
+                    this.plugin.settings.useLocalModel = true;
+                    this.plugin.settings.localBackend = "llama.cpp";
+                    this.plugin.settings.llamaCppPath = "llama-server";
+                    this.plugin.settings.llamaCppArgs = "-hf ggml-org/GLM-OCR-GGUF -ngl 99 -c 4096 --sleep-idle-seconds 300";
+                    await this.plugin.saveSettings();
+                    new Notice("⚡ Low-VRAM preset applied! Reloading settings view...");
+                    this.display();
                 }));
 
         new Setting(containerEl)

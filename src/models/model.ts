@@ -26,7 +26,9 @@ export default interface Model {
     start: () => void;
     unload: () => void;
 
-    imgfileToLatex: (filepath: PathLike) => Promise<string>
+    imgfileToLatex: (filepath: PathLike, prompt?: string) => Promise<string>;
+
+    processBufferToText?: (buffer: Buffer, prompt?: string, mimeType?: string) => Promise<string>;
 
     status: () => Promise<{ status: Status, msg: string }>;
 

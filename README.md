@@ -1,161 +1,116 @@
-# Obsidian OCR
+# VLMs OCR for Obsidian
 
-![GitHub release (with filter)](https://img.shields.io/github/v/release/agostino-code/obsidian-ocr)
-[![Hugging Face](https://img.shields.io/badge/Hugging%20Face-FFD21E?logo=huggingface&logoColor=000)](#)
-[![Ollama](https://img.shields.io/badge/Ollama-fff?logo=ollama&logoColor=000)](#)
-[![Obsidian](https://img.shields.io/badge/Obsidian-%23483699.svg?&logo=obsidian&logoColor=white)](#)
+[![GitHub release](https://img.shields.io/github/v/release/agostino-code/obsidian-ocr?color=blue)](https://github.com/agostino-code/obsidian-ocr/releases)
+[![Obsidian Downloads](https://img.shields.io/badge/Obsidian-Community%20Plugins-483699?logo=obsidian&logoColor=white)](https://obsidian.md/plugins?id=vlm-ocr)
+[![License: GPL-3.0](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![Local & Private](https://img.shields.io/badge/Privacy-100%25%20Local%20Available-success)](#run-locally-with-llamacpp-recommended-for-low-vram)
 
-Extract text, formulas, tables, and structured content from images and PDFs directly into your Obsidian notes, powered by [GLM-OCR](https://huggingface.co/zai-org/GLM-OCR).
+**VLMs OCR** turns Obsidian into an intelligent multimodal transcription workspace. Extract text, LaTeX mathematical formulas, and tables from images and PDFs, or generate in-depth structured descriptions of charts, plots, and diagrams—completely offline using local Vision-Language Models (VLMs) or in the cloud.
 
-> This project is a fork of [obsidian-latex-ocr](https://github.com/lucasvanmol/obsidian-latex-ocr) by lucasvanmol. The original plugin focused exclusively on LaTeX formula recognition. **Obsidian OCR** extends this to full document OCR: any text, formula, table, or mixed content in an image can be extracted and inserted into your notes.
-
-<img src="/images/demo.gif" width="50%"/>
-
-## Features
-
-- **Full OCR** — extract any text from images and PDFs, not just LaTeX formulas.
-- **Formula support** — mathematical expressions are recognized and output in LaTeX.
-- **Paste from clipboard** — use a custom command (e.g. `Ctrl+Alt+V`) to OCR an image from your clipboard and insert the result directly.
-- **Context menu** — right-click any image in your vault and choose "Generate OCR text".
-- **Multiple backends** — use the [Hugging Face API](#using-the-hugging-face-api) for a zero-install cloud option, or run locally with [Ollama](#run-locally-with-ollama) or [llama.cpp](#run-locally-with-llamacpp).
-- **On-demand local startup** — local backends are started automatically when the first OCR query is made.
+Powered locally by high-efficiency VLMs like [GLM-OCR (0.9B)](https://huggingface.co/zai-org/GLM-OCR) or any vision model via **llama.cpp** / **Ollama**, as well as the **Hugging Face Inference API**.
 
 ---
 
-## Using the Hugging Face API
+## ✨ Features
 
-The plugin can use the [GLM-OCR model](https://huggingface.co/zai-org/GLM-OCR) via the Hugging Face Inference API (free tier).
-
-### Setup
-
-1. Create an account or log in at [huggingface.co](https://huggingface.co).
-2. Generate a `read` access token in your [Hugging Face profile settings](https://huggingface.co/settings/tokens). Creating one dedicated to this plugin is recommended.
-3. In Obsidian, open **Settings → Obsidian OCR** and paste the token into the **API Key** field.
-
-### Limitations
-
-- The free Inference API may take a few seconds to provision the model on the first request. Subsequent requests are faster.
-- Rate limits apply on the free tier. If you hit them, wait a moment and retry.
-- For heavy usage, consider running the model locally with Ollama or llama.cpp (see below).
-
----
-
-## Run Locally with Ollama
-
-You can run GLM-OCR entirely on your machine using [Ollama](https://ollama.com). No internet connection or API key required after the initial model download.
-
-### Requirements
-
-- [Ollama](https://ollama.com/download) installed and available in your PATH (or at a custom path you configure).
-- A vision-capable GLM-OCR model available in your Ollama instance.
-
-### Installation
-
-**1. Install Ollama**
-
-Download and install from [ollama.com/download](https://ollama.com/download), then verify:
-
-```bash
-ollama --version
-```
-
-**2. Pull the GLM-OCR model**
-
-```bash
-ollama pull glm-ocr
-```
-
-> The model is approximately 1–2 GB. The download happens once and is cached locally.
-
-You can verify it is available with:
-
-```bash
-ollama list
-```
-
-**3. Configure the plugin**
-
-In Obsidian, open **Settings → Obsidian OCR**:
-
-- Enable **Use local model**.
-- Set **Local backend** to **Ollama**.
-- Set **Ollama command/path** — usually just `ollama` if it is in your PATH, or the full path to the binary.
-- Set **Ollama host** — default is `http://127.0.0.1`.
-- Set **Ollama port** — default is `11434`.
-- Set **Ollama model** — enter the model name exactly as shown by `ollama list`, e.g. `glm-ocr`.
-- Use **(Re)start backend**, **Check status**, and **Stop server** when needed.
-
-> If Ollama is not reachable, the plugin tries to start it automatically on the first OCR operation.
+- 🧠 **Auto-detect & Intelligent OCR Modes**:
+  - **Auto-detect**: Intelligently classifies content and outputs formatted Markdown, inline/display LaTeX, or converts charts and diagrams into rich textual explanations.
+  - **Describe Image / Chart**: Generates structured markdown summaries of graphs, plots, architectures, workflows, and infographics.
+  - **Full Document**: Converts book pages, slides, papers, and scanned notes into clean Markdown.
+  - **Formulas Only**: Formats math expressions directly into Obsidian-compatible LaTeX (`$$...$$` and `$ ... $`).
+  - **Tables**: Parses complex tabular data into pristine Markdown tables.
+  - **Plain Text & Custom Prompt**: Extract unformatted text or provide your own instruction prompt.
+- ⚡ **Optimized for Low-VRAM Hardware (MX450 / 2GB–4GB GPUs)**:
+  - Smart automatic downscaling preserves aspect ratio while preventing token explosion and out-of-memory errors.
+  - Zero-temp-file in-memory clipboard pipeline processes images directly from RAM.
+  - One-click *Low-VRAM Preset* configures context window and memory limits automatically.
+- 📋 **Seamless Workflow & Hotkeys**:
+  - **Paste image directly as OCR**: Press `Ctrl+Alt+V` (configurable) to grab an image from your clipboard and immediately insert transcribed Markdown/LaTeX at your cursor.
+  - **Non-blocking inline preview**: Real-time markdown placeholder (`<!-- [OCR is being generated...] -->`) keeps your editor responsive while the model runs.
+  - **Context Menu & Ribbon**: Right-click any image or PDF in your file explorer to transcribe or describe it.
+- 🔒 **100% Local & Private or Zero-Install Cloud**:
+  - **llama.cpp**: Native, blazing-fast GGUF execution with optional GPU offloading.
+  - **Ollama**: Connects to your local Ollama instance with auto-start support.
+  - **Hugging Face API**: Free cloud inference with zero local dependencies or GPU requirements.
 
 ---
 
-## Run Locally with llama.cpp
+## 🚀 Quick Start
 
-You can run OCR locally with [llama.cpp](https://github.com/ggml-org/llama.cpp) using `llama-server` and a compatible model.
+### Option A: Cloud Inference (Zero-Install, No GPU Required)
 
-### Requirements
-
-- `llama-server` available in your PATH (or configured with a full path).
-- A compatible OCR model, for example `ggml-org/GLM-OCR-GGUF`.
-
-### Example startup command
-
-```bash
-llama-server -hf ggml-org/GLM-OCR-GGUF --sleep-idle-seconds 300
-```
-
-### Configure the plugin
-
-In Obsidian, open **Settings → Obsidian OCR**:
-
-- Enable **Use local model**.
-- Set **Local backend** to **llama.cpp**.
-- Set **llama.cpp command/path** — usually `llama-server`.
-- Set **Ollama host** — typically `http://127.0.0.1`.
-- Set **Ollama port** — typically `8080` (auto-set when selecting `llama.cpp`).
-- Set **llama.cpp startup args** — default is `-hf ggml-org/GLM-OCR-GGUF --sleep-idle-seconds 300`.
-- Use **(Re)start backend**, **Check status**, and **Stop server** when needed.
-
-> If llama.cpp is not reachable, the plugin tries to start it automatically on the first OCR operation.
-
-### VRAM note
-
-`--sleep-idle-seconds 300` can help reduce VRAM pressure during idle periods.
-
-### GPU Support (Ollama)
-
-Ollama automatically uses your GPU if supported. To verify:
-
-```bash
-ollama run glm-ocr "test"
-```
-
-If you want to explicitly check CUDA availability, see the [Ollama GPU documentation](https://github.com/ollama/ollama/blob/main/docs/gpu.md).
-
-For llama.cpp GPU options, refer to the llama.cpp documentation and launch flags supported by your build.
-
-### Status Bar
-
-The status bar at the bottom of Obsidian shows the current state of the backend:
-
-| Status | Meaning |
-|---|---|
-| OCR ✅ | Ready |
-| OCR ⚙️ | Loading / warming up |
-| OCR 🌐 | Model being provisioned (API) |
-| OCR 🔧 | Needs configuration |
-| OCR ❌ | Unreachable |
+1. Create a free account at [huggingface.co](https://huggingface.co).
+2. Generate a `read` token in [Hugging Face Token Settings](https://huggingface.co/settings/tokens).
+3. In Obsidian, go to **Settings → VLMs OCR**:
+   - Turn off **Use local model**.
+   - Paste your token into the **API Key** field.
 
 ---
 
-## File Input Notes
+### Option B: Run Locally with llama.cpp (Recommended for Speed & Low VRAM)
 
-- The ribbon modal supports selecting files and shows the selected filename.
-- Image preview is shown for supported image formats; PDF preview is not rendered in the modal.
+Running GLM-OCR locally in GGUF format requires **less than 1.2 GB of VRAM**, making it ideal even for entry-level GPUs (like the NVIDIA GeForce MX450 / GTX 1650) or pure CPU execution.
+
+1. **Obtain llama-server**:
+   - Download the latest `llama.cpp` release with your preferred acceleration (CUDA or CPU) from [llama.cpp Releases](https://github.com/ggml-org/llama.cpp/releases).
+2. **Download GLM-OCR GGUF weights**:
+   - Model: [GLM-OCR.Q4_K_M.gguf](https://huggingface.co/mradermacher/GLM-OCR-GGUF) (~530 MB)
+   - Multimodal projector: [GLM-OCR.mmproj-Q8_0.gguf](https://huggingface.co/mradermacher/GLM-OCR-GGUF) (~484 MB)
+3. **Configure Settings**:
+   - In Obsidian, go to **Settings → VLMs OCR**.
+   - Enable **Use local model** and choose **Local backend: llama.cpp**.
+   - Set **llama.cpp executable path** to your `llama-server.exe` (or `llama-server` on Linux/macOS).
+   - Click **Apply Low-VRAM preset** or set arguments:
+     ```text
+     -m "/path/to/GLM-OCR.Q4_K_M.gguf" --mmproj "/path/to/GLM-OCR.mmproj-Q8_0.gguf" -ngl 99 -c 4096 --host 127.0.0.1 --port 8080
+     ```
 
 ---
 
-## Attribution
+### Option C: Run Locally with Ollama
 
-- Forked from [obsidian-latex-ocr](https://github.com/lucasvanmol/obsidian-latex-ocr) by [lucasvanmol](https://github.com/lucasvanmol).
-- OCR powered by [GLM-OCR](https://huggingface.co/zai-org/GLM-OCR) by [zai-org](https://github.com/zai-org).
+1. Install [Ollama](https://ollama.com/download).
+2. Pull your desired vision model (e.g., `ollama pull glm-ocr` or `ollama pull minicpm-v`).
+3. In Obsidian **Settings → VLMs OCR**:
+   - Enable **Use local model** and select **Local backend: Ollama**.
+   - Enter your model name in **Ollama model**.
+
+---
+
+## ⌨️ How to Use
+
+### 1. Clipboard Paste (Fastest)
+1. Copy any screenshot, math formula, or document snippet to your clipboard (`Win + Shift + S` on Windows, `Cmd + Shift + 4` on macOS).
+2. In your Obsidian note, run the command **"OCR image from clipboard"** (or bind it to `Ctrl+Alt+V`).
+3. The recognized Markdown or LaTeX expression will appear right at your cursor position!
+
+### 2. Vault Files
+- Right-click any supported image (`.png`, `.jpg`, `.webp`, `.bmp`, `.gif`) or `.pdf` in the file explorer.
+- Select **Perform OCR (Auto / Active mode)** to copy the text to your clipboard, or **Describe Image / Chart** for an analytical breakdown.
+
+---
+
+## ⚙️ Configuration Reference
+
+| Setting | Description | Default |
+|---|---|---|
+| **OCR mode** | Choose default parsing behavior (`Auto-detect`, `Describe`, `Document`, `Formulas`, `Tables`, `Text`, `Custom`) | `Auto-detect` |
+| **Max image dimension** | Proportional image downscaling threshold to conserve VRAM (set `1536` for 2GB GPUs, `0` to disable) | `1536` |
+| **In-memory clipboard** | Process clipboard captures entirely in memory without writing temporary files to disk | `Enabled` |
+| **Show status bar** | Displays live backend status indicators (Ready ✅, Loading ⚙️, Offline ❌) | `Enabled` |
+
+---
+
+## 🛠️ Requirements & Compatibility
+
+- **Obsidian**: v0.15.0 or newer.
+- **Operating Systems**: Windows, macOS, Linux (Desktop only).
+- **Supported File Types**: PNG, JPG, JPEG, WEBP, BMP, GIF, PDF.
+
+---
+
+## 📄 License & Attribution
+
+- Released under the [GNU General Public License v3.0 (GPL-3.0)](LICENSE).
+- Based on and inspired by the original [obsidian-latex-ocr](https://github.com/lucasvanmol/obsidian-latex-ocr) by [lucasvanmol](https://github.com/lucasvanmol).
+- Model architecture powered by [GLM-OCR](https://huggingface.co/zai-org/GLM-OCR) by the Zhipu AI & GLM research team.
