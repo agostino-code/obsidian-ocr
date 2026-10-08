@@ -1,6 +1,6 @@
 {
 	"name": "vlm-ocr",
-	"version": "1.1.5",
+	"version": "1.1.4",
 	"description": "Extract text, math formulas (LaTeX), and tables from images and PDFs, or generate detailed descriptions of charts and diagrams using local or cloud VLMs.",
 	"main": "main.js",
 	"scripts": {
